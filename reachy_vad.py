@@ -69,6 +69,7 @@ def main():
 
         try:
             i = 0
+            input("enter")
             while True:
                 chunk = mini.media.get_audio_sample()
                 if chunk is None:
@@ -102,7 +103,7 @@ def main():
         except KeyboardInterrupt:
             pass
     #save out to audio file
-    sf.write("vad_output.wav", out, sr_in)
+    # sf.write("vad_output.wav", out, sr_in)
 
 if __name__ == "__main__":
     main()
