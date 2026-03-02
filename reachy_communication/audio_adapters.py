@@ -29,20 +29,19 @@ def reachy_float32_stereo_to_pcm16_mono_16k(audio: np.ndarray) -> bytes:
 
 class PCMFramer:
     """
-    Accumulate bytes and yield fixed-size frames.
-    Gemini Live API reccomends 20-40ms frames
+    Accumulate bytes and yield fixed-size frames. Keeps leftover bytes for the next frame.
+    Frame size is determined by UPLINK_BYTES_PER_FRAME (e.g. 640 bytes for 20ms of 16kHz mono PCM16).
     """
-    def __init__(self, frame_bytes: int):
-        self.frame_bytes = frame_bytes
+    def __init__(self):
         self.buf = bytearray()
 
     def push(self, chunk: bytes):
         self.buf.extend(chunk)
 
     def pop_frames(self):
-        while len(self.buf) >= self.frame_bytes:
-            frame = bytes(self.buf[:self.frame_bytes])
-            del self.buf[:self.frame_bytes]
+        while len(self.buf) >= UPLINK_BYTES_PER_FRAME:
+            frame = bytes(self.buf[:UPLINK_BYTES_PER_FRAME])
+            del self.buf[:UPLINK_BYTES_PER_FRAME]
             yield frame
 
 def pcm16_mono_24k_to_reachy_float32_stereo_44k1(audio_bytes: bytes) -> np.ndarray:
