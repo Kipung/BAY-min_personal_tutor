@@ -5,26 +5,29 @@ import asyncio
 from contextlib import suppress
 
 from google import genai
+from google.genai.types import (
+    LiveConnectConfig,
+    AudioTranscriptionConfig,
+    Modality,
+    Tool,
+    FunctionDeclaration
+)
+from google.oauth2 import service_account
 from reachy_mini import ReachyMini
 
-from reachy_communication.audio_adapters import (
+from audio_adapters import (
     PCMFramer,
     pcm16_mono_24k_to_reachy_float32_stereo_44k1,
     reachy_float32_stereo_to_pcm16_mono_16k,
+    volume,
 )
-from reachy_communication.gemini_live import (
+from gemini_live import (
     extract_audio_chunks,
     extract_input_transcript,
     extract_output_transcript,
-    is_interrupted,
+    is_interrupted
 )
-
-MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
-LIVE_CONFIG = {
-    "response_modalities": ["AUDIO", "TEXT"],
-    "input_audio_transcription": {},
-    "output_audio_transcription": {},
-}
+MODEL = "gemini-live-2.5-flash-preview-native-audio-09-2025"
 SPEAKER_QUEUE_MAX = 60
 MIC_QUEUE_MAX = 6
 PLAY_CHUNK_SECONDS = 0.02
@@ -71,7 +74,9 @@ async def send_mic_loop(session, mic_queue: asyncio.Queue) -> None:
     """
     while True:
         frame = await mic_queue.get()
-        await session.send_realtime_input(audio={"data": frame, "mime_type": "audio/pcm"})
+        await session.send_realtime_input(
+            audio={"data": frame, "mime_type": "audio/pcm;rate=16000"}
+        )
 
 
 async def receive_loop(
@@ -82,28 +87,51 @@ async def receive_loop(
     """
     Receive Gemini Live responses, extract audio and text, and push audio to speaker_queue.
     """
-    async for response in session.receive():
-        if is_interrupted(response):
-            interrupted_event.set()
-            clear_queue(speaker_queue)
-            print("[live] interrupted=true -> dropped queued assistant audio")
-            continue
+    file = open("gemini_live_responses.txt", "w", encoding="utf-8")
+    ended = False
+    while not ended:
+        text = ""
+        async for response in session.receive():
+            file.write(str(response) + f"\n{'-'*20}\n")
+            if is_interrupted(response):
+                interrupted_event.set()
+                clear_queue(speaker_queue)
+                print("[live] interrupted=true -> dropped queued assistant audio")
+                continue
+                
+            user_tx = extract_input_transcript(response)
+            if user_tx:
+                #placeholder for uploading to firestore
+                print(f"USER: {user_tx}")
 
-        user_tx = extract_input_transcript(response)
-        if user_tx:
-            #placeholder for uploading to firestore
-            print(f"USER: {user_tx}")
 
-        spoken_tx = extract_output_transcript(response)
-        if spoken_tx:
-            #placeholder for uploading to firestore
-            print(f"ASSISTANT_SPOKEN: {spoken_tx}")
+            spoken_tx = extract_output_transcript(response)
+            if spoken_tx:
+                print(f"ASSISTANT (partial): {spoken_tx}")
+                text += spoken_tx
 
-        audio_chunks = extract_audio_chunks(response)
-        if audio_chunks:
-            interrupted_event.clear()
-            for chunk in audio_chunks:
-                drop_oldest_put_nowait(speaker_queue, chunk)
+            audio_chunks = extract_audio_chunks(response)
+            if audio_chunks:
+                interrupted_event.clear()
+                for chunk in audio_chunks:
+                    drop_oldest_put_nowait(speaker_queue, chunk)
+
+            if response.tool_call:
+                for call in response.tool_call:
+                    print(f"TOOL CALL: {call}")
+                    ended = True
+                    break
+
+        #placeholder for uploading to firestore
+        print(f"ASSISTANT FINAL: {text}")
+    file.close()
+
+# tool call
+def end_conversation():
+    """
+    End the Gemini Live conversation, if needed.
+    """
+    return
 
 
 async def play_speaker_loop(
@@ -122,7 +150,6 @@ async def play_speaker_loop(
             continue
 
         stereo_44k1 = pcm16_mono_24k_to_reachy_float32_stereo_44k1(audio_24k_pcm16)
-
         for start in range(0, stereo_44k1.shape[0], slice_n):
             if interrupted_event.is_set():
                 break
@@ -135,12 +162,37 @@ async def run() -> None:
         mini.media.start_recording()
         mini.media.start_playing()
 
-        client = genai.Client()
-        async with client.aio.live.connect(model=MODEL, config=LIVE_CONFIG) as session:
+        creds = service_account.Credentials.from_service_account_file(
+            "credentials.json",
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+        client = genai.Client(
+            credentials=creds,
+            project=creds.project_id,
+            location="us-central1",
+            vertexai=True,
+        )
+        config = LiveConnectConfig(
+            response_modalities=[Modality.AUDIO],
+            input_audio_transcription=AudioTranscriptionConfig(),
+            output_audio_transcription=AudioTranscriptionConfig(),
+            tools=[
+                Tool(
+                    function_declarations=[
+                        FunctionDeclaration(
+                            name="end_conversation",
+                            description="End the conversation with Gemini Live."
+                        )
+                    ]
+                )
+            ],
+        )
+        async with client.aio.live.connect(model=MODEL, config=config) as session:
             mic_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=MIC_QUEUE_MAX)
             speaker_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=SPEAKER_QUEUE_MAX)
             interrupted_event = asyncio.Event()
 
+            print("Connected to Gemini Live, starting communication loop...")
             tasks = [
                 asyncio.create_task(capture_mic_loop(mini, mic_queue), name="capture_mic"),
                 asyncio.create_task(send_mic_loop(session, mic_queue), name="send_mic"),

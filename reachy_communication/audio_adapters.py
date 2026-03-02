@@ -59,3 +59,9 @@ def pcm16_mono_24k_to_reachy_float32_stereo_44k1(audio_bytes: bytes) -> np.ndarr
     # mono -> stereo
     stereo = np.column_stack([y, y]).astype(np.float32)
     return stereo
+
+def volume(audio: np.ndarray, factor: float = 0.5) -> np.ndarray:
+    """
+    Reduce volume of the audio by multiplying with a factor (default 0.5 for -6dB).
+    """
+    return np.clip(audio * factor, -1.0, 1.0)
