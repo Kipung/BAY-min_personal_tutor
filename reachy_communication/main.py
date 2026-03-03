@@ -125,6 +125,7 @@ async def receive_loop(
                 for call in response.tool_call:
                     print(f"TOOL CALL: {call}")
                     ended = True
+
                     break
 
         #placeholder for uploading to firestore
@@ -155,11 +156,11 @@ async def play_speaker_loop(
         if interrupted_event.is_set():
             continue
 
-        stereo_44k1 = resample_from_24kHz(audio_24k_pcm16, output_sr)
-        for start in range(0, stereo_44k1.shape[0], slice_n):
+        out = resample_from_24kHz(audio_24k_pcm16, output_sr)
+        for start in range(0, out.shape[0], slice_n):
             if interrupted_event.is_set():
                 break
-            mini.media.push_audio_sample(stereo_44k1[start : start + slice_n])
+            mini.media.push_audio_sample(out[start : start + slice_n])
             await asyncio.sleep(0)
 
 
@@ -178,18 +179,20 @@ async def run() -> None:
             location="us-central1",
             vertexai=True,
         )
+
         config = LiveConnectConfig(
             response_modalities=[Modality.AUDIO],
             input_audio_transcription=AudioTranscriptionConfig(),
             output_audio_transcription=AudioTranscriptionConfig(),
             speech_config=SpeechConfig(language_code="en-US"),
-            proactivity=ProactivityConfig(enabled=True),
+            proactivity=ProactivityConfig(proactive_audio=True),
             system_instruction=Content(parts=[Part(text=(
                 "You are a helpful assistant talking to a user through a robot named Reachy. "
                 "The user can see and talk to Reachy, and Reachy can talk back and listen. "
                 "Keep your responses short and concise, ideally under 20 seconds of audio. "
                 "If you need to say more, break it up into multiple responses. "
                 "Only respond when asked a direct question."
+                "After 2 questions and answers, ask if the user wants to end the conversation. If they do, call the end_conversation tool"
             ))]),
             tools=[
                 Tool(
