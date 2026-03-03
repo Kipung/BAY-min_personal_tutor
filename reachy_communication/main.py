@@ -10,16 +10,19 @@ from google.genai.types import (
     AudioTranscriptionConfig,
     Modality,
     Tool,
-    FunctionDeclaration
+    FunctionDeclaration,
+    SpeechConfig,
+    ProactivityConfig,
+    Content,
+    Part
 )
 from google.oauth2 import service_account
 from reachy_mini import ReachyMini
 
 from audio_adapters import (
     PCMFramer,
-    pcm16_mono_24k_to_reachy_float32_stereo_44k1,
-    reachy_float32_stereo_to_pcm16_mono_16k,
-    volume,
+    resample_from_24kHz,
+    resample_to_16k_mono
 )
 from gemini_live import (
     extract_audio_chunks,
@@ -31,7 +34,6 @@ MODEL = "gemini-live-2.5-flash-preview-native-audio-09-2025"
 SPEAKER_QUEUE_MAX = 60
 MIC_QUEUE_MAX = 6
 PLAY_CHUNK_SECONDS = 0.02
-REACHY_SR = 44100
 
 
 def clear_queue(q: asyncio.Queue) -> None:
@@ -54,13 +56,16 @@ async def capture_mic_loop(mini: ReachyMini, mic_queue: asyncio.Queue) -> None:
     Capture audio from Reachy, convert to PCM16 16kHz mono, and push to mic_queue in 20ms frames.
     """
     framer = PCMFramer()
+    input_sr = mini.media.get_input_audio_samplerate()
+    input_ch = mini.media.get_input_channels()
     while True:
         audio = mini.media.get_audio_sample()
         if audio is None:
             await asyncio.sleep(0.002)
             continue
 
-        pcm16_16k = reachy_float32_stereo_to_pcm16_mono_16k(audio)
+        
+        pcm16_16k = resample_to_16k_mono(audio, input_sr, input_ch)
         framer.push(pcm16_16k)
 
         for frame in framer.pop_frames():
@@ -142,14 +147,15 @@ async def play_speaker_loop(
     """
     Read PCM16 24kHz mono audio chunks from speaker_queue, convert to Reachy format, and play.
     """
-    slice_n = int(REACHY_SR * PLAY_CHUNK_SECONDS)
+    output_sr = mini.media.get_output_audio_samplerate()
+    slice_n = int(output_sr * PLAY_CHUNK_SECONDS)
     while True:
         audio_24k_pcm16 = await speaker_queue.get()
 
         if interrupted_event.is_set():
             continue
 
-        stereo_44k1 = pcm16_mono_24k_to_reachy_float32_stereo_44k1(audio_24k_pcm16)
+        stereo_44k1 = resample_from_24kHz(audio_24k_pcm16, output_sr)
         for start in range(0, stereo_44k1.shape[0], slice_n):
             if interrupted_event.is_set():
                 break
@@ -176,6 +182,15 @@ async def run() -> None:
             response_modalities=[Modality.AUDIO],
             input_audio_transcription=AudioTranscriptionConfig(),
             output_audio_transcription=AudioTranscriptionConfig(),
+            speech_config=SpeechConfig(language_code="en-US"),
+            proactivity=ProactivityConfig(enabled=True),
+            system_instruction=Content(parts=[Part(text=(
+                "You are a helpful assistant talking to a user through a robot named Reachy. "
+                "The user can see and talk to Reachy, and Reachy can talk back and listen. "
+                "Keep your responses short and concise, ideally under 20 seconds of audio. "
+                "If you need to say more, break it up into multiple responses. "
+                "Only respond when asked a direct question."
+            ))]),
             tools=[
                 Tool(
                     function_declarations=[
@@ -193,6 +208,7 @@ async def run() -> None:
             interrupted_event = asyncio.Event()
 
             print("Connected to Gemini Live, starting communication loop...")
+            input("press enter to start")
             tasks = [
                 asyncio.create_task(capture_mic_loop(mini, mic_queue), name="capture_mic"),
                 asyncio.create_task(send_mic_loop(session, mic_queue), name="send_mic"),
