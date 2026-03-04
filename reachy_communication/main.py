@@ -5,17 +5,6 @@ import asyncio
 from contextlib import suppress
 
 from google import genai
-from google.genai.types import (
-    LiveConnectConfig,
-    AudioTranscriptionConfig,
-    Modality,
-    Tool,
-    FunctionDeclaration,
-    SpeechConfig,
-    ProactivityConfig,
-    Content,
-    Part
-)
 from google.oauth2 import service_account
 from reachy_mini import ReachyMini
 
@@ -31,6 +20,11 @@ from gemini_live import (
     is_interrupted
 )
 MODEL = "gemini-live-2.5-flash-preview-native-audio-09-2025"
+LIVE_CONFIG = {
+    "response_modalities": ["AUDIO"],
+    "input_audio_transcription": {},
+    "output_audio_transcription": {},
+}
 SPEAKER_QUEUE_MAX = 60
 MIC_QUEUE_MAX = 6
 PLAY_CHUNK_SECONDS = 0.02
@@ -64,7 +58,6 @@ async def capture_mic_loop(mini: ReachyMini, mic_queue: asyncio.Queue) -> None:
             await asyncio.sleep(0.002)
             continue
 
-        
         pcm16_16k = resample_to_16k_mono(audio, input_sr, input_ch)
         framer.push(pcm16_16k)
 
@@ -80,7 +73,7 @@ async def send_mic_loop(session, mic_queue: asyncio.Queue) -> None:
     while True:
         frame = await mic_queue.get()
         await session.send_realtime_input(
-            audio={"data": frame, "mime_type": "audio/pcm;rate=16000"}
+            audio={"data": frame, "mime_type": "audio/pcm"}
         )
 
 
@@ -179,33 +172,7 @@ async def run() -> None:
             location="us-central1",
             vertexai=True,
         )
-
-        config = LiveConnectConfig(
-            response_modalities=[Modality.AUDIO],
-            input_audio_transcription=AudioTranscriptionConfig(),
-            output_audio_transcription=AudioTranscriptionConfig(),
-            speech_config=SpeechConfig(language_code="en-US"),
-            proactivity=ProactivityConfig(proactive_audio=True),
-            system_instruction=Content(parts=[Part(text=(
-                "You are a helpful assistant talking to a user through a robot named Reachy. "
-                "The user can see and talk to Reachy, and Reachy can talk back and listen. "
-                "Keep your responses short and concise, ideally under 20 seconds of audio. "
-                "If you need to say more, break it up into multiple responses. "
-                "Only respond when asked a direct question."
-                "After 2 questions and answers, ask if the user wants to end the conversation. If they do, call the end_conversation tool"
-            ))]),
-            tools=[
-                Tool(
-                    function_declarations=[
-                        FunctionDeclaration(
-                            name="end_conversation",
-                            description="End the conversation with Gemini Live."
-                        )
-                    ]
-                )
-            ],
-        )
-        async with client.aio.live.connect(model=MODEL, config=config) as session:
+        async with client.aio.live.connect(model=MODEL, config=LIVE_CONFIG) as session:
             mic_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=MIC_QUEUE_MAX)
             speaker_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=SPEAKER_QUEUE_MAX)
             interrupted_event = asyncio.Event()

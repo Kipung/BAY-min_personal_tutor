@@ -21,6 +21,8 @@ def resample_to_16k_mono(audio: np.ndarray, input_sr: int, input_ch: int) -> byt
     if input_sr != UPLINK_SR:
         # resample input -> 16000
         mono_16k = resample_poly(mono, up=16000, down=input_sr).astype(np.float32)
+    else:
+        mono_16k = mono
 
     # float -> pcm16
     mono_16k = np.clip(mono_16k, -1.0, 1.0)
