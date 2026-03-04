@@ -26,8 +26,10 @@ LIVE_CONFIG = {
     "output_audio_transcription": {},
 }
 SPEAKER_QUEUE_MAX = 60
-MIC_QUEUE_MAX = 6
+MIC_QUEUE_MAX = 8
 PLAY_CHUNK_SECONDS = 0.02
+MIC_PREROLL_FRAMES = 10  # number of initial mic frames to skip to avoid stale audio
+
 
 
 def clear_queue(q: asyncio.Queue) -> None:
@@ -62,7 +64,8 @@ async def capture_mic_loop(mini: ReachyMini, mic_queue: asyncio.Queue) -> None:
         framer.push(pcm16_16k)
 
         for frame in framer.pop_frames():
-            drop_oldest_put_nowait(mic_queue, frame)
+            # drop_oldest_put_nowait(mic_queue, frame)
+            await mic_queue.put(frame)
         await asyncio.sleep(0)
 
 
@@ -70,8 +73,24 @@ async def send_mic_loop(session, mic_queue: asyncio.Queue) -> None:
     """
     Read PCM16 16kHz mono frames from mic_queue and send to Gemini Live as realtime input.
     """
+    buffered_frames = [] # count frames sent before conversation starts, to skip initial stale audio
+    started = False
+
     while True:
         frame = await mic_queue.get()
+        if not started:
+            buffered_frames.append(frame)
+            if len(buffered_frames) < MIC_PREROLL_FRAMES:
+                continue
+
+            for buffered_frame in buffered_frames:
+                await session.send_realtime_input(
+                    audio={"data": buffered_frame, "mime_type": "audio/pcm"}
+                )
+            buffered_frames.clear()
+            started = True
+            continue
+
         await session.send_realtime_input(
             audio={"data": frame, "mime_type": "audio/pcm"}
         )
@@ -93,6 +112,8 @@ async def receive_loop(
             file.write(str(response) + f"\n{'-'*20}\n")
             if is_interrupted(response):
                 interrupted_event.set()
+
+
                 clear_queue(speaker_queue)
                 print("[live] interrupted=true -> dropped queued assistant audio")
                 continue
