@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from contextlib import suppress
-import datetime
+from datetime import datetime
 
 from google import genai
 from google.oauth2 import service_account
@@ -11,6 +11,7 @@ from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 
 import firebase_admin
+from firebase_admin import credentials, firestore
 
 from audio_adapters import (
     PCMFramer,
@@ -113,10 +114,10 @@ async def receive_loop(
     file = open("gemini_live_responses.txt", "w", encoding="utf-8")
     ended = False
     
-    # creds = firebase_admin.credentials.Certificate("credentials.json")
-    # firebase_admin.initialize_app(creds)
-    # db = firebase_admin.firestore.client()
-    # message_collection = db.collection("conversations").document("BEYAvvfuXVZYo4lLPE5KFKLakId2").collection("messages")
+    creds = credentials.Certificate("credentials.json")
+    firebase_admin.initialize_app(creds)
+    db = firestore.client()
+    message_collection = db.collection("conversations").document("BEYAvvfuXVZYo4lLPE5KFKLakId2").collection("messages")
     while not ended:
         text = ""
         async for response in session.receive():
@@ -155,7 +156,7 @@ async def receive_loop(
                 if user_tx and user_tx.strip():
                     #placeholder for uploading to firestore
                     print(f"USER: {user_tx}")
-                    # message_collection.add({"from": "user", "message": user_tx, "createdAt": datetime.now()})
+                    message_collection.add({"from": "user", "message": user_tx, "createdAt": datetime.now()})
             
             if sc.output_transcription:
                 spoken_tx = sc.output_transcription.text
@@ -175,8 +176,9 @@ async def receive_loop(
             mini.media.start_playing()
             print("[live] generation complete after interruption -> ready to receive new assistant audio")
         #placeholder for uploading to firestore
-        print(f"ASSISTANT FINAL: {text}")
-        # message_collection.add({"from": "reachy", "message": text, "createdAt": datetime.now()})
+        if not ended:
+            print(f"ASSISTANT FINAL: {text}")
+            message_collection.add({"from": "reachy", "message": text, "createdAt": datetime.now()})
     file.close()
 
 
@@ -236,7 +238,7 @@ async def run() -> None:
             mic_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=MIC_QUEUE_MAX)
             speaker_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=SPEAKER_QUEUE_MAX)
             interrupted_event = asyncio.Event()
-            
+
             print("Connected to Gemini Live, starting communication loop...")
             input("press enter to start")
             tasks = [
