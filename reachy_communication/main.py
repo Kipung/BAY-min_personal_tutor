@@ -3,27 +3,52 @@ from __future__ import annotations
 import argparse
 import asyncio
 from contextlib import suppress
+from datetime import datetime
 
 from google import genai
 from google.oauth2 import service_account
 from reachy_mini import ReachyMini
+from reachy_mini.utils import create_head_pose
+
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 from audio_adapters import (
     PCMFramer,
     resample_from_24kHz,
     resample_to_16k_mono
 )
-from gemini_live import (
-    extract_audio_chunks,
-    extract_input_transcript,
-    extract_output_transcript,
-    is_interrupted
-)
 MODEL = "gemini-live-2.5-flash-preview-native-audio-09-2025"
 LIVE_CONFIG = {
     "response_modalities": ["AUDIO"],
     "input_audio_transcription": {},
     "output_audio_transcription": {},
+    "speech_config": {
+        "language_code": "en-US",
+        "voice_config": {"prebuilt_voice_config": {"voice_name": "Fenrir"}}
+    },
+    "tools": [{
+        "function_declarations": [
+            {
+                "name": "end_conversation",
+                "description": "End the conversation. Gemini Live will stop generating and close the session after calling this."
+            },
+            {
+                "name": "move_head",
+                "description": "Move Reachy's head in a direction. Argument should be one of: left, right, center, up.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "direction": {
+                            "type": "string",
+                            "enum": ["left", "right", "center", "up"]
+                        }
+                    },
+                    "required": ["direction"]
+                }
+            }
+        ]
+    }]
 }
 SPEAKER_QUEUE_MAX = 60
 MIC_QUEUE_MAX = 8
@@ -100,59 +125,97 @@ async def receive_loop(
     session,
     speaker_queue: asyncio.Queue,
     interrupted_event: asyncio.Event,
+    mini: ReachyMini,
 ) -> None:
     """
     Receive Gemini Live responses, extract audio and text, and push audio to speaker_queue.
     """
     file = open("gemini_live_responses.txt", "w", encoding="utf-8")
     ended = False
+    
+    creds = credentials.Certificate("credentials.json")
+    firebase_admin.initialize_app(creds)
+    db = firestore.client()
+    message_collection = db.collection("conversations").document("BEYAvvfuXVZYo4lLPE5KFKLakId2").collection("messages")
     while not ended:
-        text = ""
+        reachy_response_text = ""
         async for response in session.receive():
             file.write(str(response) + f"\n{'-'*20}\n")
-            if is_interrupted(response):
+            sc = response.server_content
+            
+            for call in response.tool_call.function_calls if response.tool_call else []:
+                print(f"TOOL CALL: {call}")
+                if call.name == "end_conversation":
+                    ended = True
+                elif call.name == "move_head" and call.args and isinstance(call.args, dict):
+                    direction = call.args.get("direction")
+                    if isinstance(direction, str):
+                        move_head(mini, direction)
+                        await session.send_tool_response(
+                            function_responses=[{
+                                "name": "move_head",
+                                "response": {"result": f"Moved head {direction}"},
+                                "id": call.id,
+                            }]
+                        )
+                break
+            
+            if sc is None:
+                continue
+                
+            if sc.interrupted and not interrupted_event.is_set():
+                mini.media.stop_playing()
                 interrupted_event.set()
 
 
                 clear_queue(speaker_queue)
-                print("[live] interrupted=true -> dropped queued assistant audio")
-                continue
-                
-            user_tx = extract_input_transcript(response)
-            if user_tx:
-                #placeholder for uploading to firestore
-                print(f"USER: {user_tx}")
+                print("[live] generation interrupted -> clearing speaker queue and waiting for new audio")
+                break
 
+            if sc.input_transcription:
+                user_tx = sc.input_transcription.text
+                if user_tx and user_tx.strip():
+                    #placeholder for uploading to firestore
+                    print(f"USER: {user_tx}")
+                    message_collection.add({"from": "user", "message": user_tx, "createdAt": datetime.now()})
+            
+            if sc.output_transcription:
+                spoken_tx = sc.output_transcription.text
+                if spoken_tx and spoken_tx.strip():
+                    print(f"ASSISTANT (partial): {spoken_tx}")
+                    reachy_response_text += spoken_tx
+            
+            audio_chunks = sc.model_turn.parts if sc.model_turn and sc.model_turn.parts else []
+            for part in audio_chunks:
+                inline_data = part.inline_data
+                data = inline_data.data if inline_data else None
+                if isinstance(data, (bytes, bytearray)):
+                    drop_oldest_put_nowait(speaker_queue, bytes(data))
 
-            spoken_tx = extract_output_transcript(response)
-            if spoken_tx:
-                print(f"ASSISTANT (partial): {spoken_tx}")
-                text += spoken_tx
-
-            audio_chunks = extract_audio_chunks(response)
-            if audio_chunks:
-                interrupted_event.clear()
-                for chunk in audio_chunks:
-                    drop_oldest_put_nowait(speaker_queue, chunk)
-
-            if response.tool_call:
-                for call in response.tool_call:
-                    print(f"TOOL CALL: {call}")
-                    ended = True
-
-                    break
-
+        if interrupted_event.is_set():
+            interrupted_event.clear()
+            mini.media.start_playing()
+            print("[live] generation complete after interruption -> ready to receive new assistant audio")
+            reachy_response_text += " [generation interrupted]"
         #placeholder for uploading to firestore
-        print(f"ASSISTANT FINAL: {text}")
+        if not ended:
+            print(f"ASSISTANT FINAL: {reachy_response_text}")
+            message_collection.add({"from": "reachy", "message": reachy_response_text, "createdAt": datetime.now()})
     file.close()
 
-# tool call
-def end_conversation():
-    """
-    End the Gemini Live conversation, if needed.
-    """
-    return
 
+def move_head(mini: ReachyMini, direction: str):
+    """
+    Example function for a Gemini Live tool call to move Reachy's head.
+    """
+    movement_map = {
+        "left": create_head_pose(y=20, mm=True),
+        "right": create_head_pose(y=-20, mm=True),
+        "center": create_head_pose(y=0, z=0, mm=True),
+        "up": create_head_pose(z=20, mm=True)
+    }
+    if direction in movement_map:
+        mini.goto_target(head=movement_map[direction], duration=0.5)
 
 async def play_speaker_loop(
     mini: ReachyMini,
@@ -206,7 +269,7 @@ async def run() -> None:
                 asyncio.create_task(play_speaker_loop(mini, speaker_queue, interrupted_event), name="play_speaker"),
             ]
             try:
-                await receive_loop(session, speaker_queue, interrupted_event)
+                await receive_loop(session, speaker_queue, interrupted_event, mini)
             finally:
                 for task in tasks:
                     task.cancel()
