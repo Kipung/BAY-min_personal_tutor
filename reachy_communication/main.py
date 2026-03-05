@@ -119,7 +119,7 @@ async def receive_loop(
     db = firestore.client()
     message_collection = db.collection("conversations").document("BEYAvvfuXVZYo4lLPE5KFKLakId2").collection("messages")
     while not ended:
-        text = ""
+        reachy_response_text = ""
         async for response in session.receive():
             file.write(str(response) + f"\n{'-'*20}\n")
             sc = response.server_content
@@ -162,7 +162,7 @@ async def receive_loop(
                 spoken_tx = sc.output_transcription.text
                 if spoken_tx and spoken_tx.strip():
                     print(f"ASSISTANT (partial): {spoken_tx}")
-                    text += spoken_tx
+                    reachy_response_text += spoken_tx
             
             audio_chunks = sc.model_turn.parts if sc.model_turn and sc.model_turn.parts else []
             for part in audio_chunks:
@@ -175,10 +175,11 @@ async def receive_loop(
             interrupted_event.clear()
             mini.media.start_playing()
             print("[live] generation complete after interruption -> ready to receive new assistant audio")
+            reachy_response_text += " [generation interrupted]"
         #placeholder for uploading to firestore
         if not ended:
-            print(f"ASSISTANT FINAL: {text}")
-            message_collection.add({"from": "reachy", "message": text, "createdAt": datetime.now()})
+            print(f"ASSISTANT FINAL: {reachy_response_text}")
+            message_collection.add({"from": "reachy", "message": reachy_response_text, "createdAt": datetime.now()})
     file.close()
 
 
