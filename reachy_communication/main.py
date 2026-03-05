@@ -177,7 +177,7 @@ async def receive_loop(
                 if user_tx and user_tx.strip():
                     #placeholder for uploading to firestore
                     print(f"USER: {user_tx}")
-                    message_collection.add({"from": "user", "message": user_tx, "createdAt": datetime.now()})
+                    message_collection.add({"from": "student", "message": user_tx, "createdAt": datetime.now()})
             
             if sc.output_transcription:
                 spoken_tx = sc.output_transcription.text
