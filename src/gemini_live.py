@@ -2,6 +2,7 @@ import asyncio
 
 from reachy_mini import ReachyMini
 
+from tools import Tools
 from audio_adapters import clear_queue, drop_oldest_put_nowait
 from firebase_helper import FirebaseHelper
 
@@ -34,6 +35,14 @@ LIVE_CONFIG = {
                     },
                     "required": ["direction"]
                 }
+            },
+            {
+                "name": "next_example_question",
+                "description": "move on to the next example question in the current module. No arguments. Returns the question, answer, and steps to walk through to get to the answer."
+            },
+            {
+                "name": "start_quiz",
+                "description": "Start the module's quiz. No arguments."
             }
         ]
     }]
@@ -72,13 +81,13 @@ async def receive_loop(
     interrupted_event: asyncio.Event,
     mini: ReachyMini,
     firebase: FirebaseHelper,
-    move_head_fn,
 ) -> None:
     """
     Receive Gemini Live responses, extract audio and text, and push audio to speaker_queue.
     Logs conversation messages via firebase.log_message().
     move_head_fn(mini, direction) is passed in from main to avoid circular imports.
     """
+    tool_handler = Tools(mini, firebase)
     file = open("gemini_live_responses.txt", "w", encoding="utf-8")
     ended = False
 
@@ -90,20 +99,20 @@ async def receive_loop(
 
             for call in response.tool_call.function_calls if response.tool_call else []:
                 print(f"TOOL CALL: {call}")
+                fn = getattr(tool_handler, call.name, None)
+                if fn:
+                    kwargs = dict(call.args) if call.args else {}
+                    result = fn(**kwargs)
+                    print(f"TOOL RESULT: {result}")
+                    await session.send_tool_response(
+                        function_responses=[{
+                            "id": call.id,
+                            "name": call.name,
+                            "response": {"result": result},
+                        }]
+                    )
                 if call.name == "end_conversation":
                     ended = True
-                elif call.name == "move_head" and call.args and isinstance(call.args, dict):
-                    direction = call.args.get("direction")
-                    if isinstance(direction, str):
-                        move_head_fn(mini, direction)
-                        await session.send_tool_response(
-                            function_responses=[{
-                                "name": "move_head",
-                                "response": {"result": f"Moved head {direction}"},
-                                "id": call.id,
-                            }]
-                        )
-                break
 
             if sc is None:
                 continue

@@ -6,7 +6,6 @@ from contextlib import suppress
 from google import genai
 from google.oauth2 import service_account
 from reachy_mini import ReachyMini
-from reachy_mini.utils import create_head_pose
 
 from audio_adapters import capture_mic_loop, play_speaker_loop
 from bluetooth_helper import wait_for_active_user
@@ -16,17 +15,6 @@ from gemini_live import receive_loop, send_mic_loop, LIVE_CONFIG, MODEL
 
 SPEAKER_QUEUE_MAX = 60
 MIC_QUEUE_MAX = 8
-
-
-def move_head(mini: ReachyMini, direction: str) -> None:
-    movement_map = {
-        "left": create_head_pose(y=20, mm=True),
-        "right": create_head_pose(y=-20, mm=True),
-        "center": create_head_pose(y=0, z=0, mm=True),
-        "up": create_head_pose(z=20, mm=True),
-    }
-    if direction in movement_map:
-        mini.goto_target(head=movement_map[direction], duration=0.5)
 
 
 async def run() -> None:
@@ -56,14 +44,14 @@ async def run() -> None:
 
             print("Connected to Gemini Live, starting communication loop...")
             input("press enter to start")
-
+        
             tasks = [
                 asyncio.create_task(capture_mic_loop(mini, mic_queue), name="capture_mic"),
                 asyncio.create_task(send_mic_loop(session, mic_queue), name="send_mic"),
                 asyncio.create_task(play_speaker_loop(mini, speaker_queue, interrupted_event), name="play_speaker"),
             ]
             try:
-                await receive_loop(session, speaker_queue, interrupted_event, mini, firebase, move_head)
+                await receive_loop(session, speaker_queue, interrupted_event, mini, firebase)
             finally:
                 for task in tasks:
                     task.cancel()
