@@ -5,6 +5,9 @@ import asyncio
 from contextlib import suppress
 from datetime import datetime
 
+from vision import ReachyVision, send_vision_loop
+from rag import FirestoreRAG
+
 import math
 
 from google import genai
@@ -23,76 +26,103 @@ from audio_adapters import (
     resample_from_24kHz,
     resample_to_16k_mono
 )
-MODEL = "gemini-live-2.5-flash-preview-native-audio-09-2025"
-LIVE_CONFIG = {
-    "response_modalities": ["AUDIO"],
-    "system_instruction": "Always respond in English only. If the user speaks another language, continue in English. For movement requests, map wording cues to motion size: words like 'slightly'/'a bit' -> small move, 'more'/'further' -> medium move, and 'way more'/'a lot'/'all the way' -> large move.",
-    "input_audio_transcription": {},
-    "output_audio_transcription": {},
-    "speech_config": {
-        "language_code": "en-US",
-        "voice_config": {"prebuilt_voice_config": {"voice_name": "Fenrir"}}
-    },
-    "tools": [{
-        "function_declarations": [
-            {
-                "name": "end_conversation",
-                "description": "End the conversation. Gemini Live will stop generating and close the session after calling this."
-            },
-            {
-                "name": "move_head",
-                "description": "Move Reachy's head/base in a direction. Optionally include intensity or steps based on user wording (for example: slightly, more, all the way).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "direction": {
-                            "type": "string",
-                            "enum": [
-                                "left", "right", "up", "down",
-                                "tilt_left", "tilt_right",
-                                "center", "base_left", "base_right"
-                            ]
+# MODEL = "gemini-live-2.5-flash-preview-native-audio-09-2025"
+MODEL = "gemini-live-2.5-flash-native-audio"
+
+def build_live_config(lesson_context: str = "") -> dict:
+    """Build the Gemini Live session config, optionally injecting RAG lesson context."""
+    base_instruction = (
+        "You are BAY-min, a friendly and encouraging 4th-grade math tutor robot. "
+        "Always respond in English only. If the student speaks another language, gently continue in English. "
+        "You will periodically receive images from your front-facing camera — use them to "
+        "describe what you see, answer visual questions, or react to the student's environment. "
+        "For movement requests, map wording cues to motion size: words like 'slightly'/'a bit' -> "
+        "small move, 'more'/'further' -> medium move, and 'way more'/'a lot'/'all the way' -> large move. "
+        "Keep explanations simple, positive, and age-appropriate for a 4th grader. "
+        "Always give ONE response per student turn, then wait for them to reply before continuing."
+    )
+
+    if lesson_context:
+        system_instruction = (
+            base_instruction
+            + "\n\n"
+            + lesson_context
+        )
+    else:
+        system_instruction = base_instruction
+
+    return {
+        "response_modalities": ["AUDIO"],
+        "system_instruction": system_instruction,
+        "input_audio_transcription": {},
+        "output_audio_transcription": {},
+        "speech_config": {
+            "language_code": "en-US",
+            "voice_config": {"prebuilt_voice_config": {"voice_name": "Fenrir"}}
+        },
+        "tools": [{
+            "function_declarations": [
+                {
+                    "name": "end_conversation",
+                    "description": "End the conversation. Gemini Live will stop generating and close the session after calling this."
+                },
+                {
+                    "name": "move_head",
+                    "description": "Move Reachy's head/base in a direction. Optionally include intensity or steps based on user wording (for example: slightly, more, all the way).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "direction": {
+                                "type": "string",
+                                "enum": [
+                                    "left", "right", "up", "down",
+                                    "tilt_left", "tilt_right",
+                                    "center", "base_left", "base_right"
+                                ]
+                            },
+                            "intensity": {
+                                "type": "string",
+                                "enum": ["tiny", "small", "medium", "large", "max"]
+                            },
+                            "steps": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 4
+                            },
+                            "cue": {
+                                "type": "string",
+                                "description": "Original wording cue for motion size, e.g. 'a bit more', 'all the way'."
+                            }
                         },
-                        "intensity": {
-                            "type": "string",
-                            "enum": ["tiny", "small", "medium", "large", "max"]
+                        "required": ["direction"]
+                    }
+                },
+                {
+                    "name": "set_pose",
+                    "description": "Set combined head/base pose with optional hold and return behavior.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "yaw_deg": {"type": "number", "minimum": -35, "maximum": 35},
+                            "pitch_deg": {"type": "number", "minimum": -25, "maximum": 25},
+                            "roll_deg": {"type": "number", "minimum": -20, "maximum": 20},
+                            "x_mm": {"type": "number", "minimum": -20, "maximum": 20},
+                            "y_mm": {"type": "number", "minimum": -25, "maximum": 25},
+                            "z_mm": {"type": "number", "minimum": -20, "maximum": 20},
+                            "body_yaw_deg": {"type": "number", "minimum": -60, "maximum": 60},
+                            "duration_s": {"type": "number", "minimum": 0.2, "maximum": 4.0},
+                            "hold_s": {"type": "number", "minimum": 0.0, "maximum": 8.0},
+                            "return_mode": {"type": "string", "enum": ["auto", "keep", "neutral"]}
                         },
-                        "steps": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 4
-                        },
-                        "cue": {
-                            "type": "string",
-                            "description": "Original wording cue for motion size, e.g. 'a bit more', 'all the way'."
-                        }
-                    },
-                    "required": ["direction"]
+                        "required": []
+                    }
                 }
-            },
-            {
-                "name": "set_pose",
-                "description": "Set combined head/base pose with optional hold and return behavior.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "yaw_deg": {"type": "number", "minimum": -35, "maximum": 35},
-                        "pitch_deg": {"type": "number", "minimum": -25, "maximum": 25},
-                        "roll_deg": {"type": "number", "minimum": -20, "maximum": 20},
-                        "x_mm": {"type": "number", "minimum": -20, "maximum": 20},
-                        "y_mm": {"type": "number", "minimum": -25, "maximum": 25},
-                        "z_mm": {"type": "number", "minimum": -20, "maximum": 20},
-                        "body_yaw_deg": {"type": "number", "minimum": -60, "maximum": 60},
-                        "duration_s": {"type": "number", "minimum": 0.2, "maximum": 4.0},
-                        "hold_s": {"type": "number", "minimum": 0.0, "maximum": 8.0},
-                        "return_mode": {"type": "string", "enum": ["auto", "keep", "neutral"]}
-                    },
-                    "required": []
-                }
-            }
-        ]
-    }]
-}
+            ]
+        }]
+    }
+
+
+
 SPEAKER_QUEUE_MAX = 60
 MOTION_QUEUE_MAX = 20
 MOTION_DEFAULT_DURATION = 0.6
@@ -406,23 +436,20 @@ async def receive_loop(
     interrupted_event: asyncio.Event,
     mini: ReachyMini,
     motion_queue: asyncio.Queue,
+    message_collection,
 ) -> None:
     """
     Receive Gemini Live responses, extract audio and text, and push audio to speaker_queue.
     """
     file = open("gemini_live_responses.txt", "w", encoding="utf-8")
     ended = False
-    
-    creds = credentials.Certificate("credentials.json")
-    firebase_admin.initialize_app(creds)
-    db = firestore.client()
-    message_collection = db.collection("conversations").document("BEYAvvfuXVZYo4lLPE5KFKLakId2").collection("messages")
     while not ended:
         reachy_response_text = ""
+        has_user_input = False
         async for response in session.receive():
             file.write(str(response) + f"\n{'-'*20}\n")
             sc = response.server_content
-            
+
             for call in response.tool_call.function_calls if response.tool_call else []:
                 print(f"TOOL CALL: {call}")
 
@@ -487,12 +514,10 @@ async def receive_loop(
 
             if sc is None:
                 continue
-                
+
             if sc.interrupted and not interrupted_event.is_set():
                 mini.media.stop_playing()
                 interrupted_event.set()
-
-
                 clear_queue(speaker_queue)
                 clear_queue(motion_queue)
                 print("[live] generation interrupted -> cleared speaker + motion queues")
@@ -501,30 +526,30 @@ async def receive_loop(
             if sc.input_transcription:
                 user_tx = sc.input_transcription.text
                 if user_tx and user_tx.strip():
-                    #placeholder for uploading to firestore
+                    has_user_input = True
                     print(f"USER: {user_tx}")
                     message_collection.add({"from": "student", "message": user_tx, "createdAt": datetime.now()})
-            
+
             if sc.output_transcription:
                 spoken_tx = sc.output_transcription.text
-                if spoken_tx and spoken_tx.strip():
+                if spoken_tx and spoken_tx.strip() and has_user_input:
                     print(f"ASSISTANT (partial): {spoken_tx}")
                     reachy_response_text += spoken_tx
-            
-            audio_chunks = sc.model_turn.parts if sc.model_turn and sc.model_turn.parts else []
-            for part in audio_chunks:
-                inline_data = part.inline_data
-                data = inline_data.data if inline_data else None
-                if isinstance(data, (bytes, bytearray)):
-                    drop_oldest_put_nowait(speaker_queue, bytes(data))
+
+            if has_user_input:
+                audio_chunks = sc.model_turn.parts if sc.model_turn and sc.model_turn.parts else []
+                for part in audio_chunks:
+                    inline_data = part.inline_data
+                    data = inline_data.data if inline_data else None
+                    if isinstance(data, (bytes, bytearray)):
+                        drop_oldest_put_nowait(speaker_queue, bytes(data))
 
         if interrupted_event.is_set():
             interrupted_event.clear()
             mini.media.start_playing()
             print("[live] generation complete after interruption -> ready to receive new assistant audio")
             reachy_response_text += " [generation interrupted]"
-        #placeholder for uploading to firestore
-        if not ended:
+        if not ended and (has_user_input or interrupted_event.is_set()):
             print(f"ASSISTANT FINAL: {reachy_response_text}")
             message_collection.add({"from": "reachy", "message": reachy_response_text, "createdAt": datetime.now()})
     file.close()
@@ -592,6 +617,25 @@ async def run() -> None:
         mini.media.start_recording()
         mini.media.start_playing()
 
+        # Firebase + RAG setup after ReachyMini/GStreamer is initialized
+        fb_creds = credentials.Certificate("credentials.json")
+        firebase_admin.initialize_app(fb_creds)
+        db = firestore.client()
+
+        rag = FirestoreRAG(db, module_pattern=r"^math_grade4_ch1_les\d+_")
+        rag.load()
+        lesson_context = rag.build_system_context()
+
+        message_collection = (
+            db.collection("conversations")
+            .document("BEYAvvfuXVZYo4lLPE5KFKLakId2")
+            .collection("messages")
+        )
+
+        live_config = build_live_config(lesson_context)
+
+        vision = ReachyVision(mini)
+
         creds = service_account.Credentials.from_service_account_file(
             "credentials.json",
             scopes=["https://www.googleapis.com/auth/cloud-platform"],
@@ -602,7 +646,7 @@ async def run() -> None:
             location="us-central1",
             vertexai=True,
         )
-        async with client.aio.live.connect(model=MODEL, config=LIVE_CONFIG) as session:
+        async with client.aio.live.connect(model=MODEL, config=live_config) as session:
             mic_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=MIC_QUEUE_MAX)
             speaker_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=SPEAKER_QUEUE_MAX)
             interrupted_event = asyncio.Event()
@@ -615,13 +659,12 @@ async def run() -> None:
                 asyncio.create_task(capture_mic_loop(mini, mic_queue), name="capture_mic"),
                 asyncio.create_task(send_mic_loop(session, mic_queue), name="send_mic"),
                 asyncio.create_task(play_speaker_loop(mini, speaker_queue, interrupted_event), name="play_speaker"),
-                asyncio.create_task(
-                    motion_worker_loop(mini, motion_queue, interrupted_event, emotions),
-                    name="motion_worker",
-),
+                asyncio.create_task(motion_worker_loop(mini, motion_queue, interrupted_event, emotions),name="motion_worker",),
+                asyncio.create_task(vision.capture_loop(), name="capture_vision"),
+                asyncio.create_task(send_vision_loop(session, vision), name="send_vision"),
             ]
             try:
-                await receive_loop(session, speaker_queue, interrupted_event, mini, motion_queue)
+                await receive_loop(session, speaker_queue, interrupted_event, mini, motion_queue, message_collection)
             finally:
                 for task in tasks:
                     task.cancel()
