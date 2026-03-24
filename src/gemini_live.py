@@ -8,45 +8,6 @@ from firebase_helper import FirebaseHelper
 
 MIC_PREROLL_FRAMES = 10  # number of initial mic frames to skip to avoid stale audio
 MODEL = "gemini-live-2.5-flash-preview-native-audio-09-2025"
-LIVE_CONFIG = {
-    "response_modalities": ["AUDIO"],
-    "input_audio_transcription": {},
-    "output_audio_transcription": {},
-    "speech_config": {
-        "language_code": "en-US",
-        "voice_config": {"prebuilt_voice_config": {"voice_name": "Fenrir"}}
-    },
-    "tools": [{
-        "function_declarations": [
-            {
-                "name": "end_conversation",
-                "description": "End the conversation. Gemini Live will stop generating and close the session after calling this."
-            },
-            {
-                "name": "move_head",
-                "description": "Move Reachy's head in a direction. Argument should be one of: left, right, center, up.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "direction": {
-                            "type": "string",
-                            "enum": ["left", "right", "center", "up"]
-                        }
-                    },
-                    "required": ["direction"]
-                }
-            },
-            {
-                "name": "next_example_question",
-                "description": "move on to the next example question in the current module. No arguments. Returns the question, answer, and steps to walk through to get to the answer."
-            },
-            {
-                "name": "start_quiz",
-                "description": "Start the module's quiz. No arguments."
-            }
-        ]
-    }]
-}
 
 async def send_mic_loop(session, mic_queue: asyncio.Queue) -> None:
     """

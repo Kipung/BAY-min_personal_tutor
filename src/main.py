@@ -107,6 +107,14 @@ def build_live_config(lesson_context: str = "") -> dict:
                         },
                         "required": []
                     }
+                },
+                {
+                    "name": "next_example_question",
+                    "description": "move on to the next example question in the current module. No arguments. Returns the question, answer, and steps to walk through to get to the answer."
+                },
+                {
+                    "name": "start_quiz",
+                    "description": "Start the module's quiz. No arguments."
                 }
             ]
         }]
