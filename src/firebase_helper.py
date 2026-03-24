@@ -61,7 +61,7 @@ class FirebaseHelper:
 
         module_data = self.db.collection("modules").document(self.module_id).get().to_dict() or {}
         example_questions = (
-            module_data.get("instructional_content", {}).get("example_walkthrough", [])
+            module_data.get("quiz_questions", {}).get("guided", [])
         )
         if next_num >= len(example_questions):
             return "There are no more example questions, move on to the quiz."
