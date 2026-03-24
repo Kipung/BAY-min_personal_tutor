@@ -28,6 +28,12 @@ class FirebaseHelper:
         self.user_id = user_id
         self.user_doc_ref = self.db.collection("user_profiles").document(user_id)
 
+        # Read initial module_id synchronously to avoid a race with the async listener
+        profile = self.user_doc_ref.get()
+        if profile.exists:
+            self.module_id = profile.to_dict().get("active_module_id")
+            print(f"[firebase] Initial module: {self.module_id}")
+
         def on_profile_update(snapshots, _changes, _read_time):
             for snap in snapshots:
                 self.module_id = snap.to_dict().get("active_module_id")
