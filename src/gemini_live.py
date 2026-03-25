@@ -9,6 +9,106 @@ from firebase_helper import FirebaseHelper
 MIC_PREROLL_FRAMES = 10  # number of initial mic frames to skip to avoid stale audio
 MODEL = "gemini-live-2.5-flash-preview-native-audio-09-2025"
 
+def build_live_config(lesson_context: str = "") -> dict:
+    """Build the Gemini Live session config, optionally injecting RAG lesson context."""
+    base_instruction = (
+        "You are BAY-min, a friendly and encouraging 4th-grade math tutor robot. "
+        "Always respond in English only. If the student speaks another language, gently continue in English. "
+        "You will periodically receive images from your front-facing camera — use them to "
+        "describe what you see, answer visual questions, or react to the student's environment. "
+        "For movement requests, map wording cues to motion size: words like 'slightly'/'a bit' -> "
+        "small move, 'more'/'further' -> medium move, and 'way more'/'a lot'/'all the way' -> large move. "
+        "Keep explanations simple, positive, and age-appropriate for a 4th grader. "
+        "Always give ONE response per student turn, then wait for them to reply before continuing."
+    )
+
+    if lesson_context:
+        system_instruction = (
+            base_instruction
+            + "\n\n"
+            + lesson_context
+        )
+    else:
+        system_instruction = base_instruction
+
+    return {
+        "response_modalities": ["AUDIO"],
+        "system_instruction": system_instruction,
+        "input_audio_transcription": {},
+        "output_audio_transcription": {},
+        "speech_config": {
+            "language_code": "en-US",
+            "voice_config": {"prebuilt_voice_config": {"voice_name": "Fenrir"}}
+        },
+        "tools": [{
+            "function_declarations": [
+                {
+                    "name": "end_conversation",
+                    "description": "End the conversation. Gemini Live will stop generating and close the session after calling this."
+                },
+                {
+                    "name": "move_head",
+                    "description": "Move Reachy's head/base in a direction. Optionally include intensity or steps based on user wording (for example: slightly, more, all the way).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "direction": {
+                                "type": "string",
+                                "enum": [
+                                    "left", "right", "up", "down",
+                                    "tilt_left", "tilt_right",
+                                    "center", "base_left", "base_right"
+                                ]
+                            },
+                            "intensity": {
+                                "type": "string",
+                                "enum": ["tiny", "small", "medium", "large", "max"]
+                            },
+                            "steps": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 4
+                            },
+                            "cue": {
+                                "type": "string",
+                                "description": "Original wording cue for motion size, e.g. 'a bit more', 'all the way'."
+                            }
+                        },
+                        "required": ["direction"]
+                    }
+                },
+                {
+                    "name": "set_pose",
+                    "description": "Set combined head/base pose with optional hold and return behavior.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "yaw_deg": {"type": "number", "minimum": -35, "maximum": 35},
+                            "pitch_deg": {"type": "number", "minimum": -25, "maximum": 25},
+                            "roll_deg": {"type": "number", "minimum": -20, "maximum": 20},
+                            "x_mm": {"type": "number", "minimum": -20, "maximum": 20},
+                            "y_mm": {"type": "number", "minimum": -25, "maximum": 25},
+                            "z_mm": {"type": "number", "minimum": -20, "maximum": 20},
+                            "body_yaw_deg": {"type": "number", "minimum": -60, "maximum": 60},
+                            "duration_s": {"type": "number", "minimum": 0.2, "maximum": 4.0},
+                            "hold_s": {"type": "number", "minimum": 0.0, "maximum": 8.0},
+                            "return_mode": {"type": "string", "enum": ["auto", "keep", "neutral"]}
+                        },
+                        "required": []
+                    }
+                },
+                {
+                    "name": "next_example_question",
+                    "description": "move on to the next example question in the current module. No arguments. Returns the question, answer, and steps to walk through to get to the answer."
+                },
+                {
+                    "name": "start_quiz",
+                    "description": "Start the module's quiz. No arguments."
+                }
+            ]
+        }]
+    }
+
 async def send_mic_loop(session, mic_queue: asyncio.Queue) -> None:
     """
     Read PCM16 16kHz mono frames from mic_queue and send to Gemini Live as realtime input.
@@ -42,7 +142,10 @@ async def receive_loop(
     interrupted_event: asyncio.Event,
     mini: ReachyMini,
     firebase: FirebaseHelper,
-) -> None:
+    disconnected_event: asyncio.Event,
+    module_exited_event: asyncio.Event,
+) -> str:
+    """Returns 'disconnected', 'module_exited', or 'ended'."""
     """
     Receive Gemini Live responses, extract audio and text, and push audio to speaker_queue.
     Logs conversation messages via firebase.log_message().
@@ -53,6 +156,12 @@ async def receive_loop(
     ended = False
 
     while not ended:
+        if disconnected_event.is_set():
+            file.close()
+            return "disconnected"
+        if module_exited_event.is_set():
+            file.close()
+            return "module_exited"
         reachy_response_text = ""
         async for response in session.receive():
             file.write(str(response) + f"\n{'-'*20}\n")
@@ -115,3 +224,4 @@ async def receive_loop(
             firebase.log_message("reachy", reachy_response_text)
 
     file.close()
+    return "ended"
