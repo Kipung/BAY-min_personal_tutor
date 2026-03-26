@@ -1,24 +1,59 @@
-from reachy_mini import ReachyMini
-from reachy_mini.utils import create_head_pose
+import asyncio
 
 from firebase_helper import FirebaseHelper
+from motion import enqueue_head_command, enqueue_pose_command
 
 
 class Tools:
-    def __init__(self, mini: ReachyMini, firebase: FirebaseHelper):
-        self.mini = mini
+    def __init__(self, firebase: FirebaseHelper, motion_queue: asyncio.Queue):
         self.firebase = firebase
+        self.motion_queue = motion_queue
 
-    def move_head(self, direction: str) -> str:
-        movement_map = {
-            "left": create_head_pose(y=20, mm=True),
-            "right": create_head_pose(y=-20, mm=True),
-            "center": create_head_pose(y=0, z=0, mm=True),
-            "up": create_head_pose(z=20, mm=True),
-        }
-        if direction in movement_map:
-            self.mini.goto_target(head=movement_map[direction], duration=0.5)
-        return f"Moved head {direction}"
+    # ------------------------------------------------------------------
+    # Motion
+    # ------------------------------------------------------------------
+
+    def move_head(
+        self,
+        direction: str,
+        intensity: str | None = None,
+        steps: int | None = None,
+        cue: str | None = None,
+    ) -> str:
+        enqueue_head_command(self.motion_queue, direction, intensity, steps, cue)
+        return ""
+
+    def set_pose(
+        self,
+        yaw_deg: float = 0.0,
+        pitch_deg: float = 0.0,
+        roll_deg: float = 0.0,
+        x_mm: float = 0.0,
+        y_mm: float = 0.0,
+        z_mm: float = 0.0,
+        body_yaw_deg: float | None = None,
+        duration_s: float = 0.6,
+        hold_s: float = 0.0,
+        return_mode: str = "auto",
+    ) -> str:
+        enqueue_pose_command(
+            self.motion_queue,
+            yaw_deg=yaw_deg,
+            pitch_deg=pitch_deg,
+            roll_deg=roll_deg,
+            x_mm=x_mm,
+            y_mm=y_mm,
+            z_mm=z_mm,
+            body_yaw_deg=body_yaw_deg,
+            duration_s=duration_s,
+            hold_s=hold_s,
+            return_mode=return_mode,
+        )
+        return ""
+
+    # ------------------------------------------------------------------
+    # Lesson flow
+    # ------------------------------------------------------------------
 
     def next_example_question(self) -> str:
         self.firebase.log_message("system", "next example question")

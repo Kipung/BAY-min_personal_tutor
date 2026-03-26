@@ -54,7 +54,8 @@ class FirebaseHelper:
         sender should be 'student', 'reachy', or 'system'.
         """
         if not self.user_doc_ref or not self.module_id:
-            raise RuntimeError("set_user() must be called and user must select a module before log_message()")
+            print(f"[firebase] log_message skipped (no active module): [{sender}] {message[:60]}")
+            return
         self.user_doc_ref \
             .collection("modules").document(self.module_id) \
             .collection("messages") \
@@ -62,7 +63,7 @@ class FirebaseHelper:
 
     def get_next_example_question(self) -> str:
         if not self.user_doc_ref or not self.module_id:
-            raise RuntimeError("set_user() must be called and user must select a module before get_next_example_question()")
+            return "No active module selected. Please select a module first."
         next_num = self.user_doc_ref.collection("modules").document(self.module_id).get().to_dict().get("example_question_num") + 1
 
         module_data = self.db.collection("modules").document(self.module_id).get().to_dict() or {}
