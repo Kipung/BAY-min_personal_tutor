@@ -115,7 +115,7 @@ class FirebaseHelper:
     def get_next_example_question(self) -> str:
         if not self.user_doc_ref or not self.module_id:
             return "No active module selected. Please select a module first."
-        next_num = self.user_doc_ref.collection("modules").document(self.module_id).get().to_dict().get("example_question_num") + 1
+        next_num = self.user_doc_ref.collection("modules").document(self.module_id).get().to_dict().get("example_question_num", 0) + 1
 
         module_data = self.db.collection("modules").document(self.module_id).get().to_dict() or {}
         example_questions = (
