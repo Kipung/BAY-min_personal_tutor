@@ -43,9 +43,10 @@ async def run() -> None:
 
         while True:
             # ── STATE 1: Wait for Bluetooth connection ──────────────────────
-            user_id = await wait_for_active_user_async()
-            firebase.set_user(user_id)
-
+            uid = await wait_for_active_user_async()
+            firebase.set_user(uid)
+            disconnected_event = asyncio.Event()
+            
             while True:
                 # ── STATE 2: Wait for module selection ──────────────────────
                 if not firebase.module_id:
@@ -53,7 +54,7 @@ async def run() -> None:
                     _, pending = await asyncio.wait(
                         {
                             asyncio.create_task(firebase.module_selected_event.wait(), name="module"),
-                            asyncio.create_task(firebase.disconnected_event.wait(), name="disconnect"),
+                            asyncio.create_task(disconnected_event.wait(), name="disconnect"),
                         },
                         return_when=asyncio.FIRST_COMPLETED,
                     )
@@ -62,7 +63,7 @@ async def run() -> None:
                         with suppress(asyncio.CancelledError):
                             await t
 
-                    if firebase.disconnected_event.is_set():
+                    if disconnected_event.is_set():
                         firebase.reset()
                         break  # → State 1
 
@@ -92,7 +93,7 @@ async def run() -> None:
                         outcome = await receive_loop(
                             session, speaker_queue, interrupted_event, mini, firebase,
                             motion_queue,
-                            firebase.disconnected_event, firebase.module_exited_event,
+                            disconnected_event, firebase.module_exited_event,
                         )
                     finally:
                         for task in tasks:

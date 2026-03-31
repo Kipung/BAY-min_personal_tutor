@@ -41,7 +41,7 @@ logging.basicConfig(level=logging.WARNING)  # Suppress bless noise by default
 # Public API
 # ---------------------------------------------------------------------------
 
-async def wait_for_active_user_async(poll_interval: float = 1.0) -> str:
+async def wait_for_active_user_async() -> str:
     """
     BLE drop-in replacement for the Firebase polling version.
 
@@ -54,11 +54,14 @@ async def wait_for_active_user_async(poll_interval: float = 1.0) -> str:
     received_event = asyncio.Event()
     received_uid: list[str] = []  # List used as a mutable container for the callback closure
 
+    # In on_write_request, after received_event.set(), send the ACK:
     def on_write_request(characteristic: BlessGATTCharacteristic, value, **kwargs):
         try:
             uid = bytes(value).decode("utf-8").strip()
             if uid:
                 received_uid.append(uid)
+                characteristic.value = "ACK".encode("utf-8")  # set the value
+                server.update_value(SERVICE_UUID, CHAR_UUID)   # push notification
                 received_event.set()
         except Exception as e:
             print(f"[ble] Failed to decode incoming value: {e}")
@@ -74,6 +77,7 @@ async def wait_for_active_user_async(poll_interval: float = 1.0) -> str:
             GATTCharacteristicProperties.read
             | GATTCharacteristicProperties.write
             | GATTCharacteristicProperties.write_without_response
+            | GATTCharacteristicProperties.notify
         ),
         None,
         (
