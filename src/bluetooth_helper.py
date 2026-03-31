@@ -38,7 +38,7 @@ from bless import (
 # Configuration
 # ---------------------------------------------------------------------------
 
-DEVICE_NAME  = "PythonBLE"
+DEVICE_NAME  = "BAY-min"
 SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 CHAR_UUID    = "12345678-1234-5678-1234-56789abcdef1"
 
