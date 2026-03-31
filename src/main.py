@@ -43,10 +43,9 @@ async def run() -> None:
 
         while True:
             # ── STATE 1: Wait for Bluetooth connection ──────────────────────
-            uid = await wait_for_active_user_async()
+            uid, disconnected_event = await wait_for_active_user_async()
             firebase.set_user(uid)
-            disconnected_event = asyncio.Event()
-            
+
             while True:
                 # ── STATE 2: Wait for module selection ──────────────────────
                 if not firebase.module_id:
