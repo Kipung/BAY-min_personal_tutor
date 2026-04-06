@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import random
 
 from bless import (
@@ -108,7 +109,9 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
     print("[state] State 1: Waiting for Bluetooth connection (active_user)...")
 
     await ready_event.wait()
-    challenge = [random.randint(0, 5), random.randint(0, 5)]
+    challenge = [random.random() * math.pi for _ in range(2)]
+    while math.abs(challenge[0] - challenge[1]) < math.pi/6:
+        challenge = [random.random() * math.pi for _ in range(2)]
     await server.update_characteristic(SERVICE_UUID, CHALLENGE_CHAR_UUID, bytearray(challenge))
 
     async def _broadcast_antenna_positions():
