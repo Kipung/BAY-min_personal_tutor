@@ -2,6 +2,7 @@ import asyncio
 import logging
 import math
 import random
+import struct
 
 from bless import (
     BlessServer,
@@ -51,15 +52,20 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
     # -----------------------------------------------------------------------
     def on_write_request(characteristic: BlessGATTCharacteristic, value, **kwargs):
         uuid = str(characteristic.uuid).lower()
-        data = bytes(value)
 
         if uuid != CHAR_UUID.lower():
             return
 
-        text = data.decode("utf-8").strip()
-
+        try: 
+            text = bytes(value).decode("utf-8").strip()
+        except UnicodeDecodeError:
+            print(f"[ble] Received non-UTF8 data: {value}")
+            return
+        
         if text == "READY" and not ready_event.is_set():
+            print("[ble] Received READY signal from Flutter app. Sending challenge and starting antenna broadcast.")
             ready_event.set()
+
         elif text and not received_uid:
             received_uid.append(text)
             uid_received_event.set()
@@ -81,10 +87,7 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
             | GATTCharacteristicProperties.notify
         ),
         None,
-        (
-            GATTAttributePermissions.readable
-            | GATTAttributePermissions.writeable
-        ),
+        GATTAttributePermissions.writeable,
     )
 
     # Add a characteristic for the authentication challenge
@@ -112,8 +115,11 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
     challenge = [random.random() * math.pi for _ in range(2)]
     while math.abs(challenge[0] - challenge[1]) < math.pi/6:
         challenge = [random.random() * math.pi for _ in range(2)]
-    await server.update_characteristic(SERVICE_UUID, CHALLENGE_CHAR_UUID, bytearray(challenge))
-
+    char = server.get_characteristic(SERVICE_UUID, CHALLENGE_CHAR_UUID)
+    payload = bytearray(struct.pack("ff", *challenge))
+    char.value = payload
+    await server.notify(SERVICE_UUID, CHALLENGE_CHAR_UUID)
+    
     async def _broadcast_antenna_positions():
         antenna_char = server.get_characteristic(ANTENNA_CHAR_UUID)
         while not uid_received_event.is_set():
@@ -124,13 +130,15 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
             except Exception as e:
                 print(f"[ble] Antenna notify failed: {e}")
             await asyncio.sleep(ANTENNA_POLL_INTERVAL)
- 
     broadcast_task = asyncio.create_task(_broadcast_antenna_positions())
-    await uid_received_event.wait()
-    active_user = received_uid[0]
-    broadcast_task.cancel()
 
-    server.update_characteristic(SERVICE_UUID, CHAR_UUID, bytearray("ACK", "utf-8"))
+    await uid_received_event.wait()
+
+    char = server.get_characteristic(SERVICE_UUID, CHAR_UUID)
+    char.value = bytearray("ACK".encode("utf-8"))
+    await server.notify(SERVICE_UUID, CHAR_UUID)
+
+    active_user = received_uid[0]
     print(f"[state] Bluetooth connected with UID: {active_user}")
 
     # -----------------------------------------------------------------------
