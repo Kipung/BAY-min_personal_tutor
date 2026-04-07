@@ -1,27 +1,30 @@
 import asyncio
 
+from google import genai
 from google.genai import errors as genai_errors
 
 from tools import Tools
 from audio_adapters import clear_queue, drop_oldest_put_nowait
 from firebase_helper import FirebaseHelper
 from motion import MOVE_HEAD_TOOL_DECLARATION, SET_POSE_TOOL_DECLARATION
+from vision import ReachyVision
 
 MIC_PREROLL_FRAMES = 10  # number of initial mic frames to skip to avoid stale audio
-MODEL = "gemini-live-2.5-flash-preview-native-audio-09-2025"
+MODEL = "gemini-live-2.5-flash-native-audio"
 
 
 def build_live_config(lesson_context: str = "") -> dict:
     """Build the Gemini Live session config, optionally injecting lesson context."""
     base_instruction = (
-        "You are BAY-min, a friendly and encouraging 4th-grade math tutor robot. "
-        "Always respond in English only. If the student speaks another language, gently continue in English. "
-        "You will periodically receive images from your front-facing camera — use them to "
-        "describe what you see, answer visual questions, or react to the student's environment. "
-        "For movement requests, map wording cues to motion size: words like 'slightly'/'a bit' -> "
-        "small move, 'more'/'further' -> medium move, and 'way more'/'a lot'/'all the way' -> large move. "
-        "Keep explanations simple, positive, and age-appropriate for a 4th grader. "
-        "Always give ONE response per student turn, then wait for them to reply before continuing."
+        # "You are BAY-min, a friendly and encouraging 4th-grade math tutor robot. "
+        # "Always respond in English only. If the student speaks another language, gently continue in English. "
+        # "You will periodically receive images from your front-facing camera — use them to "
+        # "describe what you see, answer visual questions, or react to the student's environment. "
+        # "For movement requests, map wording cues to motion size: words like 'slightly'/'a bit' -> "
+        # "small move, 'more'/'further' -> medium move, and 'way more'/'a lot'/'all the way' -> large move. "
+        # "Keep explanations simple, positive, and age-appropriate for a 4th grader. "
+        # "Always give ONE response per student turn, then wait for them to reply before continuing."
+        "basic"
     )
 
     if lesson_context:
@@ -53,6 +56,10 @@ def build_live_config(lesson_context: str = "") -> dict:
                 {
                     "name": "start_quiz",
                     "description": "Start the module's quiz. No arguments."
+                },
+                {
+                    "name": "capture_image",
+                    "description": "Capture a photo from the front-facing camera and see what is in front of you. Call this when you need to look at something or when the student asks you to look at something."
                 }
             ]
         }]
@@ -95,6 +102,7 @@ async def receive_loop(
     motion_queue: asyncio.Queue,
     disconnected_event: asyncio.Event,
     module_exited_event: asyncio.Event,
+    vision: ReachyVision | None = None,
 ) -> str:
     """Returns 'disconnected', 'module_exited', or 'ended'."""
     tool_handler = Tools(firebase, motion_queue)
@@ -119,6 +127,22 @@ async def receive_loop(
                 tool_responses = []
                 for call in response.tool_call.function_calls if response.tool_call else []:
                     print(f"TOOL CALL: {call}")
+                    if call.name == "capture_image":
+                        frame_bytes = await vision.get_latest_frame_bytes() if vision else None
+                        if frame_bytes:
+                            await session.send_realtime_input(
+                                video=genai.types.Blob(data=frame_bytes, mime_type="image/jpeg")
+                            )
+                            result = "Image captured and sent."
+                        else:
+                            result = "No image available."
+                        print(f"TOOL RESULT: {result}")
+                        tool_responses.append({
+                            "id": call.id,
+                            "name": call.name,
+                            "response": {"result": result},
+                        })
+                        continue
                     fn = getattr(tool_handler, call.name, None)
                     if fn:
                         kwargs = dict(call.args) if call.args else {}

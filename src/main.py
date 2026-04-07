@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 
-from vision import ReachyVision, send_vision_loop
+from vision import ReachyVision
 
 from google import genai
 from google.oauth2 import service_account
@@ -37,7 +37,23 @@ async def run() -> None:
         vertexai=True,
     )
 
-    with ReachyMini() as mini:
+    import os
+    USE_SIM = os.getenv("USE_SIM", "false").lower() == "true"
+
+    if USE_SIM:
+        mini = ReachyMini(
+            connection_mode="localhost_only",
+            spawn_daemon=True,
+            use_sim=True,
+        )
+    else:
+        mini = ReachyMini(
+            connection_mode="auto",
+            spawn_daemon=False,
+            use_sim=False,
+        )
+
+    with mini:
         emotions = RecordedMoves(EMOTION_DATASET)
         vision = ReachyVision(mini)
 
@@ -86,13 +102,13 @@ async def run() -> None:
                         asyncio.create_task(play_speaker_loop(mini, speaker_queue, interrupted_event), name="play_speaker"),
                         asyncio.create_task(motion_worker_loop(mini, motion_queue, interrupted_event, emotions), name="motion_worker"),
                         asyncio.create_task(vision.capture_loop(), name="capture_vision"),
-                        asyncio.create_task(send_vision_loop(session, vision), name="send_vision"),
                     ]
                     try:
                         outcome = await receive_loop(
                             session, speaker_queue, interrupted_event, mini, firebase,
                             motion_queue,
                             firebase.disconnected_event, firebase.module_exited_event,
+                            vision=vision,
                         )
                     finally:
                         for task in tasks:
