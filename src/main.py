@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 
-from vision import ReachyVision, send_vision_loop
+# from vision import ReachyVision, send_vision_loop
 
 from google import genai
 from google.oauth2 import service_account
@@ -37,13 +37,14 @@ async def run() -> None:
         vertexai=True,
     )
 
-    with ReachyMini() as mini:
-        emotions = RecordedMoves(EMOTION_DATASET)
-        vision = ReachyVision(mini)
+    with ReachyMini(media_backend="gstreamer_no_video") as mini:
+        # emotions = RecordedMoves(EMOTION_DATASET)
+        # vision = ReachyVision(mini)
 
         while True:
             # ── STATE 1: Wait for Bluetooth connection ──────────────────────
-            uid, disconnected_event = await wait_for_active_user_async()
+            uid, disconnected_event = await wait_for_active_user_async(mini)
+            return
             firebase.set_user(uid)
 
             while True:

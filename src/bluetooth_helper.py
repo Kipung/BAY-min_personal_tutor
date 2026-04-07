@@ -112,31 +112,35 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
     print("[state] State 1: Waiting for Bluetooth connection (active_user)...")
 
     await ready_event.wait()
-    challenge = [random.random() * math.pi for _ in range(2)]
-    while math.abs(challenge[0] - challenge[1]) < math.pi/6:
-        challenge = [random.random() * math.pi for _ in range(2)]
-    char = server.get_characteristic(SERVICE_UUID, CHALLENGE_CHAR_UUID)
-    payload = bytearray(struct.pack("ff", *challenge))
-    char.value = payload
-    await server.notify(SERVICE_UUID, CHALLENGE_CHAR_UUID)
+    challenge = [random.random() * math.pi * -1, random.random() * math.pi]
+    while abs(challenge[0] + challenge[1]) < math.pi/6:
+        challenge[1] = random.random() * math.pi
+    char = server.get_characteristic(CHALLENGE_CHAR_UUID)
+    char.value = bytearray(struct.pack("ff", *challenge))
+    server.update_value(SERVICE_UUID, CHALLENGE_CHAR_UUID)
     
     async def _broadcast_antenna_positions():
         antenna_char = server.get_characteristic(ANTENNA_CHAR_UUID)
         while not uid_received_event.is_set():
             left, right = mini.get_present_antenna_joint_positions()
-            antenna_char.value = bytearray([left, right])
+            antenna_char.value = bytearray(struct.pack("ff", left, right))
             try:
-                await server.notify(SERVICE_UUID, ANTENNA_CHAR_UUID)
+                server.update_value(SERVICE_UUID, ANTENNA_CHAR_UUID)
             except Exception as e:
                 print(f"[ble] Antenna notify failed: {e}")
             await asyncio.sleep(ANTENNA_POLL_INTERVAL)
+    mini.disable_motors(ids=["left_antenna", "right_antenna"])
     broadcast_task = asyncio.create_task(_broadcast_antenna_positions())
 
     await uid_received_event.wait()
 
-    char = server.get_characteristic(SERVICE_UUID, CHAR_UUID)
+    mini.set_target_antenna_joint_positions(mini.get_present_antenna_joint_positions())
+    mini.enable_motors(ids=["left_antenna", "right_antenna"])
+    mini.goto_target(antennas=[-0.15, 0.15], duration=1.0)
+
+    char = server.get_characteristic(CHAR_UUID)
     char.value = bytearray("ACK".encode("utf-8"))
-    await server.notify(SERVICE_UUID, CHAR_UUID)
+    server.update_value(SERVICE_UUID, CHAR_UUID)
 
     active_user = received_uid[0]
     print(f"[state] Bluetooth connected with UID: {active_user}")
@@ -153,7 +157,7 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
 
         while True:
             try:
-                connected = server.is_connected()
+                connected = await server.is_connected()
             except Exception:
                 connected = False
 
