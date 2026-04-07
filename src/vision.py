@@ -4,12 +4,10 @@ import asyncio
 
 import cv2
 import numpy as np
-from google import genai
 from reachy_mini import ReachyMini
 
 VISION_CAPTURE_INTERVAL_S = 0.5  # internal grab rate (~2 fps)
-VISION_SEND_INTERVAL_S = 2.0     # how often a frame is pushed to Gemini Live
-VISION_JPEG_QUALITY = 80         # lower = smaller payload
+VISION_JPEG_QUALITY = 95         # higher = better quality for LLM interpretation
 
 
 class ReachyVision:
@@ -38,8 +36,9 @@ class ReachyVision:
         return float(np.mean(frame)) >= threshold
 
     def _encode_jpeg(self, frame: np.ndarray) -> bytes | None:
+        resized = cv2.resize(frame, (1280, 720), interpolation=cv2.INTER_AREA)
         success, buf = cv2.imencode(
-            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, VISION_JPEG_QUALITY]
+            ".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, VISION_JPEG_QUALITY]
         )
         if not success:
             return None
@@ -49,21 +48,3 @@ class ReachyVision:
         async with self._lock:
             return self._latest_frame_bytes
 
-    async def capture_fresh_frame(self) -> bytes | None:
-        """Capture a brand-new frame directly from the camera (bypasses cache)."""
-        loop = asyncio.get_running_loop()
-        frame = await loop.run_in_executor(None, self._media.get_frame)
-        if frame is None:
-            return None
-        return self._encode_jpeg(frame)
-
-
-async def send_vision_loop(session, vision: ReachyVision) -> None:
-    """Periodically sends the latest camera frame to the active Gemini Live session."""
-    while True:
-        await asyncio.sleep(VISION_SEND_INTERVAL_S)
-        frame_bytes = await vision.get_latest_frame_bytes()
-        if frame_bytes is not None:
-            await session.send_realtime_input(
-                video=genai.types.Blob(data=frame_bytes, mime_type="image/jpeg")
-            )
