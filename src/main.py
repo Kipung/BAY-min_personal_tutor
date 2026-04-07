@@ -37,7 +37,23 @@ async def run() -> None:
         vertexai=True,
     )
 
-    with ReachyMini() as mini:
+    import os
+    USE_SIM = os.getenv("USE_SIM", "false").lower() == "true"
+
+    if USE_SIM:
+        mini = ReachyMini(
+            connection_mode="localhost_only",
+            spawn_daemon=True,
+            use_sim=True,
+        )
+    else:
+        mini = ReachyMini(
+            connection_mode="auto",
+            spawn_daemon=False,
+            use_sim=False,
+        )
+
+    with mini:
         emotions = RecordedMoves(EMOTION_DATASET)
         vision = ReachyVision(mini)
 
