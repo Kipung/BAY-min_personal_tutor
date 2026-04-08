@@ -47,7 +47,7 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
     uid_received_event = asyncio.Event()
 
     received_uid: list[str] = []
-
+    uid_buffer: list[str] = []
     # -----------------------------------------------------------------------
     # Write callback: Flutter app sent us a UID
     # -----------------------------------------------------------------------
@@ -59,6 +59,7 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
 
         try: 
             text = bytes(value).decode("utf-8").strip()
+            print(text)
         except UnicodeDecodeError:
             print(f"[ble] Received non-UTF8 data: {value}")
             return
@@ -66,10 +67,12 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
         if text == "READY" and not ready_event.is_set():
             print("[ble] Received READY signal from Flutter app. Sending challenge and starting antenna broadcast.")
             ready_event.set()
-
-        elif text and not received_uid:
-            received_uid.append(text)
-            uid_received_event.set()
+        elif len(received_uid) == 0:
+            uid_buffer.append(text)
+            assembled = "".join(uid_buffer)
+            if len(assembled) >= 28:
+                received_uid.append(assembled)
+                uid_received_event.set()
 
     # -----------------------------------------------------------------------
     # Build and start the GATT server
@@ -112,6 +115,7 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
     await server.start()
     print("[state] State 1: Waiting for Bluetooth connection (active_user)...")
 
+    
     await ready_event.wait()
     time.sleep(0.5)
     challenge = [random.random() * math.pi * -1, random.random() * math.pi]
@@ -120,7 +124,8 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
     char = server.get_characteristic(CHALLENGE_CHAR_UUID)
     char.value = bytearray(struct.pack("ff", *challenge))
     server.update_value(SERVICE_UUID, CHALLENGE_CHAR_UUID)
-    
+
+    mini.disable_motors(ids=["left_antenna", "right_antenna"])
     async def _broadcast_antenna_positions():
         antenna_char = server.get_characteristic(ANTENNA_CHAR_UUID)
         while not uid_received_event.is_set():
@@ -131,14 +136,13 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
             except Exception as e:
                 print(f"[ble] Antenna notify failed: {e}")
             await asyncio.sleep(ANTENNA_POLL_INTERVAL)
-    # mini.disable_motors(ids=["left_antenna", "right_antenna"])
     broadcast_task = asyncio.create_task(_broadcast_antenna_positions())
 
     await uid_received_event.wait()
 
-    # mini.set_target_antenna_joint_positions(mini.get_present_antenna_joint_positions())
-    # mini.enable_motors(ids=["left_antenna", "right_antenna"])
-    # mini.goto_target(antennas=[-0.15, 0.15], duration=1.0)
+    mini.set_target_antenna_joint_positions(mini.get_present_antenna_joint_positions())
+    mini.enable_motors(ids=["left_antenna", "right_antenna"])
+    mini.goto_target(antennas=[-0.15, 0.15], duration=1.0)
 
     char = server.get_characteristic(CHAR_UUID)
     char.value = bytearray("ACK".encode("utf-8"))
