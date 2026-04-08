@@ -24,7 +24,7 @@ CHALLENGE_CHAR_UUID =   "7e57417e-84bd-4fc8-9568-08e44d81e839"
 ANTENNA_CHAR_UUID =     "37f02fcb-5045-42d9-96b8-3f893402f607"
 
 CONNECTION_POLL_INTERVAL = 1.0
-ANTENNA_POLL_INTERVAL    = 0.5
+ANTENNA_POLL_INTERVAL    = 0.25
 
 logging.basicConfig(level=logging.WARNING)  # Suppress bless noise by default
 
@@ -177,6 +177,9 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
 
 def get_antenna_positions(mini: ReachyMini) -> tuple[float, float]:
     if mini is None:
-        return 0.0, 0.0
+        t = time.time()
+        left  = math.pi*-0.5 - math.sin(t * 0.5) * math.pi * -0.5   # oscillates in left range
+        right = math.pi*0.5 - math.sin(t * 0.3) * math.pi *  0.5    # oscillates in right range
+        return left, right
     left, right = mini.get_present_antenna_joint_positions()
     return left, right
