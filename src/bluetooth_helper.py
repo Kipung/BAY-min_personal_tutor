@@ -3,6 +3,7 @@ import logging
 import math
 import random
 import struct
+import time
 
 from bless import (
     BlessServer,
@@ -17,10 +18,10 @@ from reachy_mini import ReachyMini
 # ---------------------------------------------------------------------------
 
 DEVICE_NAME = "BAY-min"
-SERVICE_UUID =          "12345678-1234-5678-1234-56789abcdef0"
-CHAR_UUID =             "12345678-1234-5678-1234-56789abcdef1"
-CHALLENGE_CHAR_UUID =   "12345678-1234-5678-1234-56789abcdef2"
-ANTENNA_CHAR_UUID =     "12345678-1234-5678-1234-56789abcdef3"
+SERVICE_UUID =          "2906ab5c-18f2-4a89-b4a9-05a1e7f57ec5"
+CHAR_UUID =             "df1b5230-7bcb-4930-8d9f-ca7865dae4c7"
+CHALLENGE_CHAR_UUID =   "7e57417e-84bd-4fc8-9568-08e44d81e839"
+ANTENNA_CHAR_UUID =     "37f02fcb-5045-42d9-96b8-3f893402f607"
 
 CONNECTION_POLL_INTERVAL = 1.0
 ANTENNA_POLL_INTERVAL    = 0.5
@@ -112,6 +113,7 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
     print("[state] State 1: Waiting for Bluetooth connection (active_user)...")
 
     await ready_event.wait()
+    time.sleep(0.5)
     challenge = [random.random() * math.pi * -1, random.random() * math.pi]
     while abs(challenge[0] + challenge[1]) < math.pi/6:
         challenge[1] = random.random() * math.pi
@@ -122,21 +124,21 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
     async def _broadcast_antenna_positions():
         antenna_char = server.get_characteristic(ANTENNA_CHAR_UUID)
         while not uid_received_event.is_set():
-            left, right = mini.get_present_antenna_joint_positions()
+            left, right = get_antenna_positions(mini)
             antenna_char.value = bytearray(struct.pack("ff", left, right))
             try:
                 server.update_value(SERVICE_UUID, ANTENNA_CHAR_UUID)
             except Exception as e:
                 print(f"[ble] Antenna notify failed: {e}")
             await asyncio.sleep(ANTENNA_POLL_INTERVAL)
-    mini.disable_motors(ids=["left_antenna", "right_antenna"])
+    # mini.disable_motors(ids=["left_antenna", "right_antenna"])
     broadcast_task = asyncio.create_task(_broadcast_antenna_positions())
 
     await uid_received_event.wait()
 
-    mini.set_target_antenna_joint_positions(mini.get_present_antenna_joint_positions())
-    mini.enable_motors(ids=["left_antenna", "right_antenna"])
-    mini.goto_target(antennas=[-0.15, 0.15], duration=1.0)
+    # mini.set_target_antenna_joint_positions(mini.get_present_antenna_joint_positions())
+    # mini.enable_motors(ids=["left_antenna", "right_antenna"])
+    # mini.goto_target(antennas=[-0.15, 0.15], duration=1.0)
 
     char = server.get_characteristic(CHAR_UUID)
     char.value = bytearray("ACK".encode("utf-8"))
@@ -172,3 +174,9 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
     asyncio.create_task(_watch_connection())
 
     return active_user, disconnected_event
+
+def get_antenna_positions(mini: ReachyMini) -> tuple[float, float]:
+    if mini is None:
+        return 0.0, 0.0
+    left, right = mini.get_present_antenna_joint_positions()
+    return left, right

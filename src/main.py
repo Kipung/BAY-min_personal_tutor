@@ -23,6 +23,8 @@ MIC_QUEUE_MAX = 8
 
 
 async def run() -> None:
+    uid, disconnected_event = await wait_for_active_user_async(None)
+    return
     firebase = FirebaseHelper()
     firebase.set_loop(asyncio.get_running_loop())
 
@@ -43,7 +45,6 @@ async def run() -> None:
 
         while True:
             # ── STATE 1: Wait for Bluetooth connection ──────────────────────
-            uid, disconnected_event = await wait_for_active_user_async(mini)
             return
             firebase.set_user(uid)
 
