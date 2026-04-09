@@ -12,7 +12,7 @@ from reachy_mini.motion.recorded_move import RecordedMoves
 # --- Queue & timing ---
 MOTION_QUEUE_MAX = 20
 MOTION_DEFAULT_DURATION = 0.6
-HEAD_MOVE_DURATION_S = 0.35
+HEAD_MOVE_DURATION_S = 0.35          # fallback; see _head_duration()
 HEAD_CMD_MIN_INTERVAL_S = 0.18
 
 # --- Joint limits ---
@@ -94,6 +94,57 @@ SET_POSE_TOOL_DECLARATION = {
     },
 }
 
+# Curated subsets of the 85 available emotions for the LLM to choose from
+EMOTION_CATEGORIES = {
+    "agreement":    ["yes1", "uh_huh_tilt", "simple_nod"],
+    "disagreement": ["no1", "no_excited1", "no_sad1"],
+    "thinking":     ["thoughtful1", "thoughtful2"],
+    "curious":      ["curious1", "inquiring1", "inquiring2", "inquiring3"],
+    "happy":        ["cheerful1", "enthusiastic1", "enthusiastic2", "laughing1", "laughing2"],
+    "praise":       ["proud1", "proud2", "proud3", "success1", "success2"],
+    "encourage":    ["helpful1", "helpful2", "understanding1", "understanding2", "calming1"],
+    "surprised":    ["surprised1", "surprised2", "amazed1"],
+    "confused":     ["confused1", "uncertain1", "lost1"],
+    "greeting":     ["welcoming1", "welcoming2"],
+    "sad":          ["sad1", "sad2", "downcast1"],
+    "attentive":    ["attentive1", "attentive2"],
+    "oops":         ["oops1", "oops2"],
+}
+
+ALL_EMOTION_NAMES = sorted({name for names in EMOTION_CATEGORIES.values() for name in names})
+
+PLAY_EMOTION_TOOL_DECLARATION = {
+    "name": "play_emotion",
+    "description": (
+        "Play a full-body emotion animation on Reachy. Use this to express emotions naturally "
+        "during conversation — nodding when agreeing, looking curious when the student asks a "
+        "question, celebrating when they get an answer right, etc. "
+        "Choose by category OR by specific emotion name."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "enum": list(EMOTION_CATEGORIES.keys()),
+                "description": (
+                    "Pick a category and a fitting animation will be chosen. "
+                    "Categories: agreement (nod/yes), disagreement (no/shake), "
+                    "thinking (pondering), curious (investigating), happy (joy/laugh), "
+                    "praise (proud/success), encourage (helpful/calming), "
+                    "surprised (amazed), confused (uncertain), greeting (welcome), "
+                    "sad, attentive (listening), oops (mistake)."
+                ),
+            },
+            "emotion_name": {
+                "type": "string",
+                "description": "Specific emotion name if you want precise control. Overrides category.",
+            },
+        },
+        "required": [],
+    },
+}
+
 VALID_MOVE_DIRECTIONS = {
     "left", "right", "up", "down",
     "tilt_left", "tilt_right",
@@ -122,6 +173,12 @@ def _to_float(value, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _head_duration(delta_yaw: float, delta_pitch: float, delta_roll: float) -> float:
+    """Duration that scales with angular distance — small moves snappy, large moves deliberate."""
+    dist = math.sqrt(delta_yaw ** 2 + delta_pitch ** 2 + delta_roll ** 2)
+    return _clamp(0.15 + dist * 0.012, 0.20, 1.2)
 
 
 def _normalize_move_direction_and_scale(
@@ -287,6 +344,8 @@ async def motion_worker_loop(
             if direction != "center" and (now - last_head_cmd_ts) < HEAD_CMD_MIN_INTERVAL_S:
                 continue
 
+            prev_yaw, prev_pitch, prev_roll = current_yaw_deg, current_pitch_deg, current_roll_deg
+
             if direction == "right":
                 current_yaw_deg = _clamp(current_yaw_deg - yaw_step, HEAD_YAW_MIN_DEG, HEAD_YAW_MAX_DEG)
             elif direction == "left":
@@ -300,11 +359,36 @@ async def motion_worker_loop(
             elif direction == "tilt_right":
                 current_roll_deg = _clamp(current_roll_deg - roll_step, HEAD_ROLL_MIN_DEG, HEAD_ROLL_MAX_DEG)
             elif direction == "base_left":
+                # Head leads: anticipate the turn by glancing left
+                head_lead_yaw = _clamp(current_yaw_deg + yaw_step * 0.5, HEAD_YAW_MIN_DEG, HEAD_YAW_MAX_DEG)
+                await asyncio.to_thread(
+                    mini.goto_target,
+                    head=create_head_pose(yaw=head_lead_yaw, pitch=current_pitch_deg, roll=current_roll_deg, degrees=True),
+                    body_yaw=current_body_yaw,
+                    duration=0.25,
+                )
+                await asyncio.sleep(0.18)
                 current_body_yaw = _clamp(current_body_yaw + base_step, BASE_YAW_MIN_RAD, BASE_YAW_MAX_RAD)
+                current_yaw_deg = head_lead_yaw
             elif direction == "base_right":
+                head_lead_yaw = _clamp(current_yaw_deg - yaw_step * 0.5, HEAD_YAW_MIN_DEG, HEAD_YAW_MAX_DEG)
+                await asyncio.to_thread(
+                    mini.goto_target,
+                    head=create_head_pose(yaw=head_lead_yaw, pitch=current_pitch_deg, roll=current_roll_deg, degrees=True),
+                    body_yaw=current_body_yaw,
+                    duration=0.25,
+                )
+                await asyncio.sleep(0.18)
                 current_body_yaw = _clamp(current_body_yaw - base_step, BASE_YAW_MIN_RAD, BASE_YAW_MAX_RAD)
+                current_yaw_deg = head_lead_yaw
             elif direction == "center":
                 current_yaw_deg, current_pitch_deg, current_roll_deg = 0.0, 0.0, 0.0
+
+            dur = _head_duration(
+                current_yaw_deg - prev_yaw,
+                current_pitch_deg - prev_pitch,
+                current_roll_deg - prev_roll,
+            )
 
             await asyncio.to_thread(
                 mini.goto_target,
@@ -315,9 +399,10 @@ async def motion_worker_loop(
                     degrees=True,
                 ),
                 body_yaw=current_body_yaw,
-                duration=HEAD_MOVE_DURATION_S,
+                duration=dur,
             )
             last_head_cmd_ts = now
+
 
         elif kind == "pose":
             yaw   = _clamp(_to_float(cmd.get("yaw_deg",   0.0), 0.0), HEAD_YAW_MIN_DEG,   HEAD_YAW_MAX_DEG)
@@ -328,8 +413,9 @@ async def motion_worker_loop(
             z_mm  = _to_float(cmd.get("z_mm", 0.0), 0.0)
 
             body_yaw_deg = cmd.get("body_yaw_deg")
+            new_body_yaw = current_body_yaw
             if body_yaw_deg is not None:
-                current_body_yaw = _clamp(math.radians(float(body_yaw_deg)), BASE_YAW_MIN_RAD, BASE_YAW_MAX_RAD)
+                new_body_yaw = _clamp(math.radians(float(body_yaw_deg)), BASE_YAW_MIN_RAD, BASE_YAW_MAX_RAD)
 
             current_yaw_deg, current_pitch_deg, current_roll_deg = yaw, pitch, roll
 
@@ -337,16 +423,42 @@ async def motion_worker_loop(
             hold_s      = float(cmd.get("hold_s", 0.0))
             return_mode = str(cmd.get("return_mode", "auto"))
 
-            await asyncio.to_thread(
-                mini.goto_target,
-                head=create_head_pose(
-                    x=x_mm, y=y_mm, z=z_mm,
-                    roll=current_roll_deg, pitch=current_pitch_deg, yaw=current_yaw_deg,
-                    degrees=True, mm=True,
-                ),
-                body_yaw=current_body_yaw,
-                duration=duration_s,
-            )
+            # Head leads body: move head first, then body catches up
+            if new_body_yaw != current_body_yaw:
+                await asyncio.to_thread(
+                    mini.goto_target,
+                    head=create_head_pose(
+                        x=x_mm, y=y_mm, z=z_mm,
+                        roll=current_roll_deg, pitch=current_pitch_deg, yaw=current_yaw_deg,
+                        degrees=True, mm=True,
+                    ),
+                    body_yaw=current_body_yaw,  # body stays while head moves first
+                    duration=duration_s * 0.5,
+                )
+                await asyncio.sleep(0.18)
+                current_body_yaw = new_body_yaw
+                await asyncio.to_thread(
+                    mini.goto_target,
+                    head=create_head_pose(
+                        x=x_mm, y=y_mm, z=z_mm,
+                        roll=current_roll_deg, pitch=current_pitch_deg, yaw=current_yaw_deg,
+                        degrees=True, mm=True,
+                    ),
+                    body_yaw=current_body_yaw,
+                    duration=duration_s * 0.6,
+                )
+            else:
+                await asyncio.to_thread(
+                    mini.goto_target,
+                    head=create_head_pose(
+                        x=x_mm, y=y_mm, z=z_mm,
+                        roll=current_roll_deg, pitch=current_pitch_deg, yaw=current_yaw_deg,
+                        degrees=True, mm=True,
+                    ),
+                    body_yaw=current_body_yaw,
+                    duration=duration_s,
+                )
+
 
             if hold_s > 0:
                 await asyncio.sleep(hold_s)
@@ -359,9 +471,14 @@ async def motion_worker_loop(
                     body_yaw=current_body_yaw,
                     duration=0.6,
                 )
+    
 
         elif kind == "emotion":
             name = cmd.get("name")
             if isinstance(name, str):
                 with suppress(Exception):
-                    await mini.async_play_move(emotions.get(name))
+                    await mini.async_play_move(emotions.get(name), sound=False)
+
+
+# ---------------------------------------------------------------------------
+# Idle behavior loop  (runs as a separate asyncio task)

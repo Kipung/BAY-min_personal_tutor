@@ -1,7 +1,11 @@
 import asyncio
+import random
 
 from firebase_helper import FirebaseHelper
-from motion import enqueue_head_command, enqueue_pose_command
+from motion import (
+    enqueue_head_command, enqueue_pose_command, enqueue_emotion_command,
+    EMOTION_CATEGORIES, ALL_EMOTION_NAMES,
+)
 
 
 class Tools:
@@ -49,6 +53,21 @@ class Tools:
             hold_s=hold_s,
             return_mode=return_mode,
         )
+        return ""
+
+    def play_emotion(
+        self,
+        category: str | None = None,
+        emotion_name: str | None = None,
+    ) -> str:
+        # Specific name takes priority
+        if emotion_name and emotion_name in ALL_EMOTION_NAMES:
+            name = emotion_name
+        elif category and category in EMOTION_CATEGORIES:
+            name = random.choice(EMOTION_CATEGORIES[category])
+        else:
+            return "Unknown emotion"
+        enqueue_emotion_command(self.motion_queue, name)
         return ""
 
     # ------------------------------------------------------------------
