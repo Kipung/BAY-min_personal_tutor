@@ -140,9 +140,9 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
 
     await uid_received_event.wait()
 
-    mini.set_target_antenna_joint_positions(mini.get_present_antenna_joint_positions())
+    mini.goto_target(antennas=challenge, duration=1.0)
     mini.enable_motors(ids=["left_antenna", "right_antenna"])
-    mini.goto_target(antennas=[-0.15, 0.15], duration=1.0)
+    mini.goto_target(antennas=[-0.15, 0.15], duration=2.0)
 
     char = server.get_characteristic(CHAR_UUID)
     char.value = bytearray("ACK".encode("utf-8"))
