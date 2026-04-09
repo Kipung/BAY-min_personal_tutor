@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip show:*)",
+      "Read(//Volumes/Extra/dev-storage/miniconda3/envs/baymin/lib/python3.11/site-packages/**)",
+      "Read(//Users/kipung/Documents/School/Junior_Spring/JrDesign/BAY-min_personal_tutor/**)",
+      "Read(//Users/kipung/miniconda3/envs/baymin/lib/python3.11/site-packages/reachy_mini/**)",
+      "Read(//Volumes/Extra/dev-storage/miniconda3/envs/baymin/lib/python3.11/site-packages/reachy_mini/**)",
+      "Read(//Users/kipung/miniconda3/envs/baymin/lib/python3.11/site-packages/reachy_mini_dances_library/**)",
+      "Read(//Volumes/Extra/dev-storage/miniconda3/envs/baymin/lib/python3.11/site-packages/reachy_mini_dances_library/**)",
+      "Bash(pip list:*)",
+      "Bash(find /Users/kipung/miniconda3/envs/baymin/lib/python3.11/site-packages/reachy_mini/daemon -name \"*.html\" -exec grep -l \"emotion\" {} \\\\;)",
+      "Bash(python3)",
+      "Bash(python3 -m py_compile motion.py)",
+      "Bash(python3 -m py_compile vision.py)",
+      "Bash(python3 -m py_compile tools.py)",
+      "Bash(python3 -m py_compile gemini_live.py)",
+      "Bash(python3 -m py_compile main.py)"
+    ]
+  }
+}
