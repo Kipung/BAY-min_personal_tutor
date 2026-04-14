@@ -59,7 +59,9 @@ async def run() -> None:
 
         while True:
             # ── STATE 1: Wait for Bluetooth connection ──────────────────────
-            uid, disconnected_event = await wait_for_active_user_async(mini)
+            # uid, disconnected_event = await wait_for_active_user_async(mini)
+            uid = "BEYAvvfuXVZYo4lLPE5KFKLakId2"
+            disconnected_event = asyncio.Event()
             firebase.set_user(uid)
 
             while True:
@@ -107,7 +109,7 @@ async def run() -> None:
                         outcome = await receive_loop(
                             session, speaker_queue, interrupted_event, mini, firebase,
                             motion_queue,
-                            firebase.disconnected_event, firebase.module_exited_event,
+                            disconnected_event, firebase.module_exited_event,
                             vision=vision,
                         )
                     finally:
