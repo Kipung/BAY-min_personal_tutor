@@ -15,7 +15,15 @@
       "Bash(python3 -m py_compile vision.py)",
       "Bash(python3 -m py_compile tools.py)",
       "Bash(python3 -m py_compile gemini_live.py)",
-      "Bash(python3 -m py_compile main.py)"
+      "Bash(python3 -m py_compile main.py)",
+      "Read(//home/csdsreachy/Downloads/BAY-min_personal_tutor/**)",
+      "Bash(python3 -c \"from reachy_mini import ReachyMini; help\\(ReachyMini.goto_target\\)\")",
+      "Bash(python3 -c \"import reachy_mini; import inspect; src = inspect.getsource\\(reachy_mini.ReachyMini.goto_target\\); print\\(src\\)\")",
+      "Bash(python3 -c \"from reachy_mini.utils import create_head_pose; help\\(create_head_pose\\)\")",
+      "Bash(python3 -c \"import reachy_mini; import os; print\\(os.path.dirname\\(reachy_mini.__file__\\)\\)\")",
+      "Read(//home/csdsreachy/miniconda3/envs/reachy/lib/python3.12/site-packages/reachy_mini/**)",
+      "Read(//home/csdsreachy/miniconda3/envs/reachy/**)",
+      "Bash(python3 -c \" from reachy_mini.motion.recorded_move import RecordedMoves rm = RecordedMoves\\(\\) names = dir\\(rm\\) print\\([n for n in names if not n.startswith\\('_'\\)]\\) \")"
     ]
   }
 }

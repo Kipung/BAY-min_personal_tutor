@@ -25,7 +25,7 @@ MIC_QUEUE_MAX = 8
 async def run() -> None:
     firebase = FirebaseHelper()
     firebase.set_loop(asyncio.get_running_loop())
-
+    
     creds = service_account.Credentials.from_service_account_file(
         "credentials.json",
         scopes=["https://www.googleapis.com/auth/cloud-platform"],
@@ -60,6 +60,7 @@ async def run() -> None:
         while True:
             # ── STATE 1: Wait for Bluetooth connection ──────────────────────
             user_id = await wait_for_active_user_async()
+            # user_id = "BEYAvvfuXVZYo4lLPE5KFKLakId2"
             firebase.set_user(user_id)
 
             while True:
