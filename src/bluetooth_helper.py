@@ -13,6 +13,18 @@ from bless import (
 )
 from reachy_mini import ReachyMini
 
+from audio_adapters import AudioControl
+
+
+class ModuleControl:
+    def __init__(self, loop: asyncio.AbstractEventLoop):
+        self.module_id: str | None = None
+        self._buffer: list[str] = []
+        self._accumulating: bool = False
+        self.module_selected_event = asyncio.Event()
+        self.module_exited_event = asyncio.Event()
+        self._loop = loop
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -32,7 +44,7 @@ logging.basicConfig(level=logging.WARNING)  # Suppress bless noise by default
 # Public API
 # ---------------------------------------------------------------------------
 
-async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Event]:
+async def start_ble_server_async(mini: ReachyMini) -> tuple[str, asyncio.Event, AudioControl, ModuleControl]:
     """
     1. Flutter connects
     2. Flutter subscribes to all notify characteristics
@@ -48,8 +60,12 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
 
     received_uid: list[str] = []
     uid_buffer: list[str] = []
+
+    audio_control = AudioControl()
+    module_control = ModuleControl(asyncio.get_event_loop())
+
     # -----------------------------------------------------------------------
-    # Write callback: Flutter app sent us a UID
+    # Write callback: Flutter app sent us a command
     # -----------------------------------------------------------------------
     def on_write_request(characteristic: BlessGATTCharacteristic, value, **kwargs):
         uuid = str(characteristic.uuid).lower()
@@ -57,13 +73,13 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
         if uuid != CHAR_UUID.lower():
             return
 
-        try: 
+        try:
             text = bytes(value).decode("utf-8").strip()
             print(text)
         except UnicodeDecodeError:
             print(f"[ble] Received non-UTF8 data: {value}")
             return
-        
+
         if text == "READY" and not ready_event.is_set():
             print("[ble] Received READY signal from Flutter app. Sending challenge and starting antenna broadcast.")
             ready_event.set()
@@ -73,6 +89,41 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
             if len(assembled) >= 28:
                 received_uid.append(assembled)
                 uid_received_event.set()
+
+        # ── Volume ──────────────────────────────────────────────────────────
+        elif text.startswith("VOLUME:"):
+            try:
+                audio_control.volume = max(0, min(100, int(text.split(":")[1])))
+                print(f"[ble] Volume → {audio_control.volume}")
+            except (ValueError, IndexError):
+                pass
+
+        # ── Mic mute ────────────────────────────────────────────────────────
+        elif text == "MUTE":
+            audio_control.mic_muted = True
+            print("[ble] Mic muted")
+        elif text == "UNMUTE":
+            audio_control.mic_muted = False
+            print("[ble] Mic unmuted")
+
+        # ── Module selection ─────────────────────────────────────────────────
+        elif text.startswith("MODULE_SELECT:"):
+            module_control._buffer = [text[len("MODULE_SELECT:"):]]
+            module_control._accumulating = True
+        elif module_control._accumulating and text == "MODULE_END":
+            module_control.module_id = "".join(module_control._buffer)
+            module_control._buffer = []
+            module_control._accumulating = False
+            print(f"[ble] Module selected: {module_control.module_id}")
+            module_control._loop.call_soon_threadsafe(module_control.module_selected_event.set)
+        elif module_control._accumulating:
+            module_control._buffer.append(text)
+        elif text == "MODULE_DESELECT":
+            module_control.module_id = None
+            module_control._accumulating = False
+            module_control.module_selected_event.clear()
+            print("[ble] Module deselected")
+            module_control._loop.call_soon_threadsafe(module_control.module_exited_event.set)
 
     # -----------------------------------------------------------------------
     # Build and start the GATT server
@@ -177,7 +228,7 @@ async def wait_for_active_user_async(mini: ReachyMini) -> tuple[str, asyncio.Eve
 
     asyncio.create_task(_watch_connection())
 
-    return active_user, disconnected_event
+    return active_user, disconnected_event, audio_control, module_control
 
 def get_antenna_positions(mini: ReachyMini) -> tuple[float, float]:
     if mini is None:

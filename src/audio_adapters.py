@@ -4,6 +4,12 @@ from contextlib import suppress
 import numpy as np
 from scipy.signal import resample_poly
 
+
+class AudioControl:
+    def __init__(self):
+        self.volume: int = 80    # 0–100, speaker output level
+        self.mic_muted: bool = False  # True = send silence to Gemini
+
 UPLINK_SR = 16000
 FRAME_MS = 20
 UPLINK_SAMPLES_PER_FRAME = int(UPLINK_SR * FRAME_MS / 1000)  # 320
@@ -84,9 +90,10 @@ def resample_from_24kHz(audio_bytes: bytes, output_sr: int) -> np.ndarray:
 PLAY_CHUNK_SECONDS = 0.02
 
 
-async def capture_mic_loop(mini, mic_queue: asyncio.Queue) -> None:
+async def capture_mic_loop(mini, mic_queue: asyncio.Queue, audio_control: AudioControl | None = None) -> None:
     """
     Capture audio from Reachy, convert to PCM16 16kHz mono, and push to mic_queue in 20ms frames.
+    When audio_control.mic_muted is True, sends silence instead of real audio.
     """
     framer = PCMFramer()
     input_sr = mini.media.get_input_audio_samplerate()
@@ -101,13 +108,16 @@ async def capture_mic_loop(mini, mic_queue: asyncio.Queue) -> None:
         framer.push(pcm16_16k)
 
         for frame in framer.pop_frames():
+            if audio_control is not None and audio_control.mic_muted:
+                frame = bytes(len(frame))  # silence — Gemini hears nothing
             await mic_queue.put(frame)
         await asyncio.sleep(0)
 
 
-async def play_speaker_loop(mini, speaker_queue: asyncio.Queue, interrupted_event: asyncio.Event) -> None:
+async def play_speaker_loop(mini, speaker_queue: asyncio.Queue, interrupted_event: asyncio.Event, audio_control: AudioControl | None = None) -> None:
     """
     Read PCM16 24kHz mono audio chunks from speaker_queue, convert to Reachy format, and play.
+    Applies volume scaling from audio_control when provided.
     """
     output_sr = mini.media.get_output_audio_samplerate()
     slice_n = int(output_sr * PLAY_CHUNK_SECONDS)
@@ -118,6 +128,8 @@ async def play_speaker_loop(mini, speaker_queue: asyncio.Queue, interrupted_even
             continue
 
         out = resample_from_24kHz(audio_24k_pcm16, output_sr)
+        if audio_control is not None:
+            out = out * (audio_control.volume / 100.0)
         for start in range(0, out.shape[0], slice_n):
             if interrupted_event.is_set():
                 break
