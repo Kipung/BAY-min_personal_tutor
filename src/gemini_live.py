@@ -227,7 +227,7 @@ async def receive_loop(
                         drop_oldest_put_nowait(speaker_queue, bytes(data))
 
         except genai_errors.APIError as e:
-            if e.status_code == 1000:
+            if e.code == 1000:
                 print(f"[live] session closed by server: {e}")
                 ended = True
             else:
