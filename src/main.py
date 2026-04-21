@@ -10,8 +10,8 @@ from google.oauth2 import service_account
 from reachy_mini import ReachyMini
 from reachy_mini.motion.recorded_move import RecordedMoves
 
-from audio_adapters import capture_mic_loop, play_speaker_loop
-from bluetooth_helper import start_ble_server_async
+from audio_adapters import capture_mic_loop, play_speaker_loop, AudioControl
+from bluetooth_helper import start_ble_server_async, ModuleControl
 from firebase_helper import FirebaseHelper
 from gemini_live import receive_loop, send_mic_loop, MODEL, build_live_config
 from motion import motion_worker_loop, MOTION_QUEUE_MAX
@@ -59,7 +59,12 @@ async def run() -> None:
 
         while True:
             # ── STATE 1: Wait for Bluetooth connection ──────────────────────
-            uid, disconnected_event, audio_control, module_control = await start_ble_server_async(mini)
+            # uid, disconnected_event, audio_control, module_control = await start_ble_server_async(mini)
+            uid = "BEYAvvfuXVZYo4lLPE5KFKLakId2"
+            audio_control = AudioControl()
+            module_control = ModuleControl()
+            disconnected_event = asyncio.Event()
+            module_control.module_id = "math_grade1_addition_subtraction"
             firebase.set_user(uid)
 
             while True:
