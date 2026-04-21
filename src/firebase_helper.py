@@ -26,43 +26,13 @@ class FirebaseHelper:
         self.module_exited_event: asyncio.Event = None
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Store the running event loop and initialise async events. Call once at startup."""
+        """Store the running event loop. Call once at startup."""
         self._loop = loop
-        self.module_selected_event = asyncio.Event()
-        self.module_exited_event = asyncio.Event()
 
     def set_user(self, user_id: str) -> None:
-        """
-        Store the active user and start listeners so that:
-        - module_selected_event is set when active_module_id becomes non-null
-        - module_exited_event is set when active_module_id becomes null
-        """
+        """Store the active user so Firestore operations can target the right document."""
         self.user_id = user_id
         self.user_doc_ref = self.db.collection("user_profiles").document(user_id)
-
-        # Reset events for this new session
-        self.module_selected_event.clear()
-        self.module_exited_event.clear()
-
-        # Read initial module_id synchronously to avoid a race with the listener
-        profile = self.user_doc_ref.get()
-        if profile.exists:
-            self.module_id = profile.to_dict().get("active_module_id")
-            print(f"[firebase] Initial module: {self.module_id}")
-
-        def on_profile_update(snapshots, _changes, _read_time):
-            for snap in snapshots:
-                new_module = snap.to_dict().get("active_module_id")
-                if new_module == self.module_id:
-                    return
-                self.module_id = new_module
-                print(f"[firebase] Module changed: {self.module_id}")
-                if new_module:
-                    self._loop.call_soon_threadsafe(self.module_selected_event.set)
-                else:
-                    self._loop.call_soon_threadsafe(self.module_exited_event.set)
-
-        self._profile_watch = self.user_doc_ref.on_snapshot(on_profile_update)
 
     def stop(self) -> None:
         """Unsubscribe all Firestore listeners."""
@@ -74,13 +44,11 @@ class FirebaseHelper:
             self._reachy_watch = None
 
     def reset(self) -> None:
-        """Stop listeners, clear user/module state, and reset events — call before re-entering State 1."""
+        """Stop listeners and clear user state — call before re-entering State 1."""
         self.stop()
         self.user_id = None
         self.user_doc_ref = None
         self.module_id = None
-        self.module_selected_event.clear()
-        self.module_exited_event.clear()
 
     def log_message(self, sender: str, message: str) -> None:
         """
@@ -114,8 +82,7 @@ class FirebaseHelper:
 
     def get_lesson_data(self) -> str:
         if not self.user_doc_ref or not self.module_id:
-            raise RuntimeError("set_user() must be called and user must select a module before get_lesson_context()")
+            raise RuntimeError("set_user() must be called and a module must be selected before get_lesson_data()")
         module_data = self.db.collection("modules").document(self.module_id).get().to_dict() or {}
-        #dont attach stuff under quiz_questions
         module_data.pop("quiz_questions", None)
         return str(module_data)

@@ -11,7 +11,7 @@ from reachy_mini import ReachyMini
 from reachy_mini.motion.recorded_move import RecordedMoves
 
 from audio_adapters import capture_mic_loop, play_speaker_loop
-from bluetooth_helper import wait_for_active_user_async
+from bluetooth_helper import start_ble_server_async
 from firebase_helper import FirebaseHelper
 from gemini_live import receive_loop, send_mic_loop, MODEL, build_live_config
 from motion import motion_worker_loop, MOTION_QUEUE_MAX
@@ -59,17 +59,16 @@ async def run() -> None:
 
         while True:
             # ── STATE 1: Wait for Bluetooth connection ──────────────────────
-            uid, disconnected_event = await wait_for_active_user_async(mini)
-            # uid, disconnected_event = ("BEYAvvfuXVZYo4lLPE5KFKLakId2", asyncio.Event())
+            uid, disconnected_event, audio_control, module_control = await start_ble_server_async(mini)
             firebase.set_user(uid)
 
             while True:
                 # ── STATE 2: Wait for module selection ──────────────────────
-                if not firebase.module_id:
+                if not module_control.module_id:
                     print("[state] State 2: Waiting for module selection...")
                     _, pending = await asyncio.wait(
                         {
-                            asyncio.create_task(firebase.module_selected_event.wait(), name="module"),
+                            asyncio.create_task(module_control.module_selected_event.wait(), name="module"),
                             asyncio.create_task(disconnected_event.wait(), name="disconnect"),
                         },
                         return_when=asyncio.FIRST_COMPLETED,
@@ -82,6 +81,9 @@ async def run() -> None:
                     if disconnected_event.is_set():
                         firebase.reset()
                         break  # → State 1
+
+                # Sync module_id onto firebase so log_message / get_lesson_data work
+                firebase.module_id = module_control.module_id
 
                 # ── STATE 3: Module active — run Gemini loops ───────────────
                 print(f"[state] State 3: Module '{firebase.module_id}' active.")
@@ -98,9 +100,9 @@ async def run() -> None:
                     motion_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=MOTION_QUEUE_MAX)
 
                     tasks = [
-                        asyncio.create_task(capture_mic_loop(mini, mic_queue), name="capture_mic"),
+                        asyncio.create_task(capture_mic_loop(mini, mic_queue, audio_control), name="capture_mic"),
                         asyncio.create_task(send_mic_loop(session, mic_queue), name="send_mic"),
-                        asyncio.create_task(play_speaker_loop(mini, speaker_queue, interrupted_event), name="play_speaker"),
+                        asyncio.create_task(play_speaker_loop(mini, speaker_queue, interrupted_event, audio_control), name="play_speaker"),
                         asyncio.create_task(motion_worker_loop(mini, motion_queue, interrupted_event, emotions), name="motion_worker"),
                         asyncio.create_task(vision.capture_loop(), name="capture_vision"),
                     ]
@@ -108,7 +110,7 @@ async def run() -> None:
                         outcome = await receive_loop(
                             session, speaker_queue, interrupted_event, mini, firebase,
                             motion_queue,
-                            disconnected_event, firebase.module_exited_event,
+                            disconnected_event, module_control.module_exited_event,
                             vision=vision,
                         )
                     finally:
@@ -128,8 +130,9 @@ async def run() -> None:
 
                 # "module_exited" or "ended" → back to State 2
                 firebase.module_id = None
-                firebase.module_selected_event.clear()
-                firebase.module_exited_event.clear()
+                module_control.module_id = None
+                module_control.module_selected_event.clear()
+                module_control.module_exited_event.clear()
 
 
 def main() -> None:
