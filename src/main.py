@@ -59,8 +59,8 @@ async def run() -> None:
 
         while True:
             # ── STATE 1: Wait for Bluetooth connection ──────────────────────
-            user_id = await wait_for_active_user_async()
-            # user_id = "BEYAvvfuXVZYo4lLPE5KFKLakId2"
+            # user_id = await wait_for_active_user_async()
+            user_id = "BEYAvvfuXVZYo4lLPE5KFKLakId2"
             firebase.set_user(user_id)
 
             while True:
