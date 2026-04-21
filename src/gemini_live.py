@@ -89,8 +89,17 @@ DEMO_MODE_ADDENDUM = (
 
     "Never:\n"
     "- Never ask 'would you like me to...' — just do it.\n"
-    "- Never call capture_image unless the student explicitly asks you to look.\n"
-    "- Never speak between tool calls in the iPad sequence."
+    "- Never speak between set_pose and capture_image (would shake the shot).\n\n"
+
+    "CRITICAL — capture_image must fire:\n"
+    "ANY of these phrasings MUST trigger the full iPad flow above, including "
+    "capture_image: 'check my work', 'is this right', 'is this correct', "
+    "'am I right', 'am I correct', 'did I do this right', 'did I do it right', "
+    "'look at this', 'look at my work', 'can you check', 'what do you think of "
+    "this', 'is my answer right'. If you hear ANY of these, you are REQUIRED "
+    "to call set_pose and capture_image. Answering without calling capture_image "
+    "is a demo failure — the student cannot be checked unless you actually "
+    "see their work."
 )
 
 
