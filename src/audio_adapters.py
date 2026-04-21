@@ -88,6 +88,7 @@ def resample_from_24kHz(audio_bytes: bytes, output_sr: int) -> np.ndarray:
 
 
 PLAY_CHUNK_SECONDS = 0.02
+MAX_VOLUME_GAIN = 3.0  # 100% volume applies 3x gain to compensate for quiet output
 
 
 async def capture_mic_loop(mini, mic_queue: asyncio.Queue, audio_control: AudioControl | None = None) -> None:
@@ -129,7 +130,8 @@ async def play_speaker_loop(mini, speaker_queue: asyncio.Queue, interrupted_even
 
         out = resample_from_24kHz(audio_24k_pcm16, output_sr)
         if audio_control is not None:
-            out = out * (audio_control.volume / 100.0)
+            gain = (audio_control.volume / 100.0) * MAX_VOLUME_GAIN
+            out = np.clip(out * gain, -1.0, 1.0)
         for start in range(0, out.shape[0], slice_n):
             if interrupted_event.is_set():
                 break

@@ -13,7 +13,7 @@ from reachy_mini.motion.recorded_move import RecordedMoves
 from audio_adapters import capture_mic_loop, play_speaker_loop, AudioControl
 from bluetooth_helper import start_ble_server_async, ModuleControl
 from firebase_helper import FirebaseHelper
-from gemini_live import receive_loop, send_mic_loop, MODEL, build_live_config
+from gemini_live import receive_loop, send_mic_loop, send_flow_context, MODEL, build_live_config
 from motion import motion_worker_loop, MOTION_QUEUE_MAX
 
 
@@ -97,9 +97,10 @@ async def run() -> None:
                 mini.media.start_playing()
 
                 lesson_data = firebase.get_lesson_data()
-                live_config = build_live_config(lesson_data)
+                live_config = build_live_config()
 
                 async with client.aio.live.connect(model=MODEL, config=live_config) as session:
+                    await send_flow_context(session, lesson_data)
                     mic_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=MIC_QUEUE_MAX)
                     speaker_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=SPEAKER_QUEUE_MAX)
                     interrupted_event = asyncio.Event()

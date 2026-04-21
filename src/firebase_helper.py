@@ -84,6 +84,19 @@ class FirebaseHelper:
         if not self.user_doc_ref or not self.module_id:
             raise RuntimeError("set_user() must be called and a module must be selected before get_lesson_data()")
         module_data = self.db.collection("modules").document(self.module_id).get().to_dict() or {}
-        module_data.pop("quiz_questions", None)
-        module_data.pop("example_walkthrough", None)
-        return str(module_data)
+        try:
+            concepts = [
+                {"term": c.get("term", ""), "definition": c.get("definition", "").strip()}
+                for c in module_data.get("concepts", [])
+            ]
+        except Exception as e:
+            try:
+                concepts = ', '.join(module_data.get("concepts", []))
+            except Exception as e:
+                concepts = ""
+        lesson = {
+            "title": module_data.get("title", ""),
+            "essential_question": module_data.get("essential_question", "").strip(),
+            "concepts": concepts,
+        }
+        return str(lesson)
