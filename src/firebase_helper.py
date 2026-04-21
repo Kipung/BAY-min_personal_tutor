@@ -85,4 +85,5 @@ class FirebaseHelper:
             raise RuntimeError("set_user() must be called and a module must be selected before get_lesson_data()")
         module_data = self.db.collection("modules").document(self.module_id).get().to_dict() or {}
         module_data.pop("quiz_questions", None)
+        module_data.pop("example_walkthrough", None)
         return str(module_data)
