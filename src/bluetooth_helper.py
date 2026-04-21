@@ -116,6 +116,7 @@ async def start_ble_server_async(mini: ReachyMini) -> tuple[str, asyncio.Event, 
             module_control._accumulating = False
             print(f"[ble] Module selected: {module_control.module_id}")
             module_control._loop.call_soon_threadsafe(module_control.module_selected_event.set)
+            module_control._loop.call_soon_threadsafe(module_control.module_exited_event.clear)
         elif module_control._accumulating:
             module_control._buffer.append(text)
         elif text == "MODULE_DESELECT":
