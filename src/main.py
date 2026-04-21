@@ -62,7 +62,8 @@ async def run() -> None:
             uid, disconnected_event, audio_control, module_control = await start_ble_server_async(mini)
             # uid = "BEYAvvfuXVZYo4lLPE5KFKLakId2"
             # audio_control = AudioControl()
-            # module_control = ModuleControl(loop=asyncio.get_running_loop())
+            # loop = asyncio.get_running_loop()
+            # module_control = ModuleControl(loop)
             # disconnected_event = asyncio.Event()
             # module_control.module_id = "math_grade1_addition_subtraction"
             firebase.set_user(uid)
