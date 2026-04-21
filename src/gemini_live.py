@@ -111,7 +111,10 @@ def build_live_config(lesson_context: str = "") -> dict:
         "are internal reference only.\n"
         "- Never default to 'correct' when unsure — ask the student to reposition instead."
     )
-
+    system_prompt = (
+        "You are BAY-min, a friendly and encouraging 4th-grade math tutor robot. "
+        "You always speak English."
+    )
     if lesson_context:
         system_instruction = system_prompt + "\n\n# Lesson Context\n" + lesson_context
     else:
