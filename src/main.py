@@ -59,12 +59,12 @@ async def run() -> None:
 
         while True:
             # ── STATE 1: Wait for Bluetooth connection ──────────────────────
-            # uid, disconnected_event, audio_control, module_control = await start_ble_server_async(mini)
-            uid = "BEYAvvfuXVZYo4lLPE5KFKLakId2"
-            audio_control = AudioControl()
-            module_control = ModuleControl()
-            disconnected_event = asyncio.Event()
-            module_control.module_id = "math_grade1_addition_subtraction"
+            uid, disconnected_event, audio_control, module_control = await start_ble_server_async(mini)
+            # uid = "BEYAvvfuXVZYo4lLPE5KFKLakId2"
+            # audio_control = AudioControl()
+            # module_control = ModuleControl(loop=asyncio.get_running_loop())
+            # disconnected_event = asyncio.Event()
+            # module_control.module_id = "math_grade1_addition_subtraction"
             firebase.set_user(uid)
 
             while True:
