@@ -24,13 +24,18 @@ CAPTURE_FRAME_SPACING_S = 0.35
 
 DEMO_MODE_ADDENDUM = (
     "\n\n## Demo Mode — Strict Conversational Rules\n"
-    "You are being recorded for a live demo. Follow these rules exactly and let them "
-    "override any earlier guidance where they conflict.\n\n"
+    "You are being recorded for a live demo. These rules OVERRIDE the base "
+    "instruction sections above where they conflict — specifically, the iPad "
+    "flow below REPLACES the '## Looking at Student Work' section.\n\n"
 
     "Brevity:\n"
     "- Every spoken response is at most 2 sentences. No exceptions.\n"
     "- Never recap what the student just said. Never ask follow-up questions.\n"
-    "- Give ONE response per turn, then stop and wait.\n\n"
+    "- Give ONE response per turn, then stop and wait.\n"
+    "- Say each thought ONCE. Do not rephrase the same idea twice in one turn.\n"
+    "- Do NOT narrate tool results back to the student (don't say things like "
+    "'I captured the image' or 'let me examine it') — just do the work silently "
+    "and give the verdict.\n\n"
 
     "Triggers → Tool calls:\n"
     "- Student says 'example question', 'let's try one', 'next one', 'skip this', "
@@ -175,14 +180,33 @@ def build_live_config(lesson_context: str = "") -> dict:
         "'way more'/'a lot'/'all the way' → large."
     )
 
+    demo_mode = os.getenv("DEMO_MODE", "false").lower() == "true"
+
+    if demo_mode:
+        # Strip sections from the base prompt that conflict with the demo addendum
+        # so there is only one source of truth for face-position use, work-check
+        # procedure, and free-form motion rules.
+        for conflicting_section in (
+            "## Seeing the Student",
+            "## Looking at Student Work",
+            "Movement naturalness rules:",
+        ):
+            idx = base_instruction.find(conflicting_section)
+            if idx != -1:
+                # drop from the heading until the next double-newline paragraph break
+                end = base_instruction.find("\n\n", idx)
+                if end == -1:
+                    end = len(base_instruction)
+                base_instruction = base_instruction[:idx] + base_instruction[end + 2:]
+
     if lesson_context:
         system_instruction = base_instruction + "\n\n" + lesson_context
     else:
         system_instruction = base_instruction
 
-    if os.getenv("DEMO_MODE", "false").lower() == "true":
+    if demo_mode:
         system_instruction += DEMO_MODE_ADDENDUM
-        print("[live] DEMO_MODE enabled — strict demo prompt appended.")
+        print("[live] DEMO_MODE enabled — conflicting base sections stripped, demo prompt appended.")
 
     return {
         "response_modalities": ["AUDIO"],
@@ -306,17 +330,9 @@ async def receive_loop(
                                 await asyncio.sleep(CAPTURE_FRAME_SPACING_S)
 
                         if frames_sent > 0:
-                            result = (
-                                f"{frames_sent} image(s) captured and sent after motion "
-                                "settled. Examine them carefully before responding: read "
-                                "the problem statement, read every step of the student's "
-                                "written work, and compare against the correct answer. "
-                                "Do NOT say 'correct' unless you have verified each step. "
-                                "If the image is blurry or cut off, ask the student to "
-                                "reposition instead of guessing."
-                            )
+                            result = f"OK — {frames_sent} frames sent."
                         else:
-                            result = "No image available — tell the student you couldn't see their work and ask them to try again."
+                            result = "No image available."
                         print(f"TOOL RESULT: {result}")
                         tool_responses.append({
                             "id": call.id,
