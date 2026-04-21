@@ -16,6 +16,12 @@ from vision import ReachyVision
 MIC_PREROLL_FRAMES = 10  # number of initial mic frames to skip to avoid stale audio
 MODEL = "gemini-live-2.5-flash-native-audio"
 
+# capture_image: let queued motion (set_pose/emotion) finish before the snapshot,
+# then send multiple frames so Gemini has more than one chance to read the iPad.
+CAPTURE_MOTION_SETTLE_S = 1.2
+CAPTURE_NUM_FRAMES = 3
+CAPTURE_FRAME_SPACING_S = 0.35
+
 DEMO_MODE_ADDENDUM = (
     "\n\n## Demo Mode — Strict Conversational Rules\n"
     "You are being recorded for a live demo. Follow these rules exactly and let them "
@@ -35,22 +41,29 @@ DEMO_MODE_ADDENDUM = (
 
     "Looking at the iPad (work-check):\n"
     "The student's work is on an iPad held directly in front of you, slightly below "
-    "eye level. DO NOT call get_face_position. Use this exact sequence:\n"
+    "eye level. DO NOT call get_face_position. Motion shakes the camera, so any "
+    "movement before the capture MUST be allowed to settle — the capture_image "
+    "handler already waits, so just call the tools in this exact order and do "
+    "NOT insert emotions before the capture:\n"
     "- Student says 'check my work', 'is this right', 'am I correct', 'look at this', "
     "'did I do it right' →\n"
-    "  1. call play_emotion(category='thinking')\n"
-    "  2. call set_pose(pitch_deg=15, yaw_deg=0, return_mode='keep', duration_s=1.0)\n"
-    "  3. call capture_image — WAIT for the image before speaking.\n"
-    "  4. Before judging, silently read: (a) the problem shown on the iPad, "
-    "(b) every step of the student's written work, (c) the correct answer you "
-    "received from next_example_question if available. Compare step-by-step.\n"
-    "  5. Speak TWO sentences total:\n"
+    "  1. call set_pose(pitch_deg=15, yaw_deg=0, return_mode='keep', duration_s=1.0) "
+    "— NO play_emotion before this. Emotions move the body and blur the shot.\n"
+    "  2. call capture_image IMMEDIATELY after set_pose, in the same turn. "
+    "The handler will wait for motion to settle and grab multiple frames.\n"
+    "  3. WAIT for the tool result before speaking. Do not speak between tool calls.\n"
+    "  4. Before judging, silently read across the frames: (a) the problem shown on "
+    "the iPad, (b) every step of the student's written work, (c) the correct answer "
+    "you received from next_example_question if available. Compare step-by-step.\n"
+    "  5. (Optional) call play_emotion(category='thinking') AFTER analyzing but "
+    "BEFORE speaking, to signal you're processing — only if it feels natural.\n"
+    "  6. Speak TWO sentences total:\n"
     "     - Sentence 1: state what the problem is and what answer the student got "
     "(e.g., 'You're simplifying 2/3 + 1/4 and you got 3/7.').\n"
     "     - Sentence 2: if correct, say 'That's right!'; if wrong, name the "
     "specific step that is wrong (e.g., 'But the denominators aren't the same yet, "
     "so you can't add the numerators directly.').\n"
-    "  6. call return_home\n"
+    "  7. call return_home\n"
     "- If the image is blurry, cut off, or you genuinely cannot read the work, "
     "DO NOT guess — say 'I can't quite see your work, can you hold the iPad a "
     "little closer?' and stop.\n"
@@ -269,18 +282,29 @@ async def receive_loop(
                 for call in response.tool_call.function_calls if response.tool_call else []:
                     print(f"TOOL CALL: {call}")
                     if call.name == "capture_image":
-                        frame_bytes = await vision.get_latest_frame_bytes() if vision else None
-                        if frame_bytes:
-                            await session.send_realtime_input(
-                                video=genai.types.Blob(data=frame_bytes, mime_type="image/jpeg")
-                            )
+                        # Let any queued set_pose / play_emotion settle before grabbing frames.
+                        await asyncio.sleep(CAPTURE_MOTION_SETTLE_S)
+
+                        frames_sent = 0
+                        for i in range(CAPTURE_NUM_FRAMES):
+                            frame_bytes = await vision.get_latest_frame_bytes() if vision else None
+                            if frame_bytes:
+                                await session.send_realtime_input(
+                                    video=genai.types.Blob(data=frame_bytes, mime_type="image/jpeg")
+                                )
+                                frames_sent += 1
+                            if i < CAPTURE_NUM_FRAMES - 1:
+                                await asyncio.sleep(CAPTURE_FRAME_SPACING_S)
+
+                        if frames_sent > 0:
                             result = (
-                                "Image captured and sent. Examine it carefully before "
-                                "responding: read the problem statement, read every step "
-                                "of the student's written work, and compare against the "
-                                "correct answer. Do NOT say 'correct' unless you have "
-                                "verified each step. If the image is blurry or cut off, "
-                                "ask the student to reposition instead of guessing."
+                                f"{frames_sent} image(s) captured and sent after motion "
+                                "settled. Examine them carefully before responding: read "
+                                "the problem statement, read every step of the student's "
+                                "written work, and compare against the correct answer. "
+                                "Do NOT say 'correct' unless you have verified each step. "
+                                "If the image is blurry or cut off, ask the student to "
+                                "reposition instead of guessing."
                             )
                         else:
                             result = "No image available — tell the student you couldn't see their work and ask them to try again."
