@@ -16,21 +16,21 @@ HEAD_MOVE_DURATION_S = 0.35          # fallback; see _head_duration()
 HEAD_CMD_MIN_INTERVAL_S = 0.18
 
 # --- Joint limits ---
-BASE_YAW_STEP_RAD = 0.22
-BASE_YAW_MIN_RAD = -1.00
-BASE_YAW_MAX_RAD = 1.00
+BASE_YAW_STEP_RAD = 0.40
+BASE_YAW_MIN_RAD = -2.80
+BASE_YAW_MAX_RAD = 2.80
 
-HEAD_YAW_MIN_DEG = -35
-HEAD_YAW_MAX_DEG = 35
-HEAD_PITCH_MIN_DEG = -25
-HEAD_PITCH_MAX_DEG = 25
-HEAD_ROLL_MIN_DEG = -20
-HEAD_ROLL_MAX_DEG = 20
+HEAD_YAW_MIN_DEG = -25
+HEAD_YAW_MAX_DEG = 25
+HEAD_PITCH_MIN_DEG = -20
+HEAD_PITCH_MAX_DEG = 20
+HEAD_ROLL_MIN_DEG = -15
+HEAD_ROLL_MAX_DEG = 15
 
 # --- Step sizes per direction ---
-YAW_STEP_DEG = 13.0
-PITCH_STEP_DEG = 10.0
-ROLL_STEP_DEG = 8.0
+YAW_STEP_DEG = 10.0
+PITCH_STEP_DEG = 8.0
+ROLL_STEP_DEG = 6.0
 
 MOVE_HEAD_TOOL_DECLARATION = {
     "name": "move_head",
@@ -73,19 +73,20 @@ SET_POSE_TOOL_DECLARATION = {
         "Set an exact head pose using angles. Use this for combined or diagonal directions "
         "that move_head can't express (e.g. 'bottom right' = pitch_deg=20, yaw_deg=-25; "
         "'top left' = pitch_deg=-20, yaw_deg=25; 'reset/center' = all zeros). "
-        "Coordinate signs: yaw_deg negative=right, positive=left; "
-        "pitch_deg positive=down, negative=up; roll_deg positive=tilt-left, negative=tilt-right."
+        "Coordinate signs: yaw_deg negative=right, positive=left (relative to body forward); "
+        "pitch_deg positive=down, negative=up; roll_deg positive=tilt-left, negative=tilt-right; "
+        "body_yaw_deg negative=turn body right, positive=turn body left."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "yaw_deg":      {"type": "number", "minimum": -35, "maximum": 35},
-            "pitch_deg":    {"type": "number", "minimum": -25, "maximum": 25},
-            "roll_deg":     {"type": "number", "minimum": -20, "maximum": 20},
+            "yaw_deg":      {"type": "number", "minimum": -25, "maximum": 25},
+            "pitch_deg":    {"type": "number", "minimum": -20, "maximum": 20},
+            "roll_deg":     {"type": "number", "minimum": -15, "maximum": 15},
             "x_mm":         {"type": "number", "minimum": -20, "maximum": 20},
             "y_mm":         {"type": "number", "minimum": -25, "maximum": 25},
             "z_mm":         {"type": "number", "minimum": -20, "maximum": 20},
-            "body_yaw_deg": {"type": "number", "minimum": -60, "maximum": 60},
+            "body_yaw_deg": {"type": "number", "minimum": -160, "maximum": 160},
             "duration_s":   {"type": "number", "minimum": 0.2, "maximum": 4.0},
             "hold_s":       {"type": "number", "minimum": 0.0, "maximum": 8.0},
             "return_mode":  {"type": "string", "enum": ["auto", "keep", "neutral"]},
@@ -145,6 +146,17 @@ PLAY_EMOTION_TOOL_DECLARATION = {
     },
 }
 
+RETURN_HOME_TOOL_DECLARATION = {
+    "name": "return_home",
+    "description": (
+        "Smoothly return Reachy's head AND body to the neutral forward-facing position "
+        "(all angles zero). Use this when the student asks you to 'look forward', "
+        "'go back to normal', 'return to original position', or whenever you want to "
+        "re-center after a series of movements."
+    ),
+    "parameters": {"type": "object", "properties": {}, "required": []},
+}
+
 VALID_MOVE_DIRECTIONS = {
     "left", "right", "up", "down",
     "tilt_left", "tilt_right",
@@ -152,11 +164,11 @@ VALID_MOVE_DIRECTIONS = {
 }
 
 MOVE_INTENSITY_SCALE = {
-    "tiny":   0.7,
+    "tiny":   0.5,
     "small":  1.0,
-    "medium": 1.6,
-    "large":  2.4,
-    "max":    3.2,
+    "medium": 1.5,
+    "large":  2.0,
+    "max":    2.5,
 }
 
 
@@ -306,6 +318,13 @@ def enqueue_emotion_command(motion_queue: asyncio.Queue, name: str) -> None:
     motion_queue.put_nowait({"kind": "emotion", "name": name})
 
 
+def enqueue_return_home_command(motion_queue: asyncio.Queue) -> None:
+    if motion_queue.full():
+        with suppress(asyncio.QueueEmpty):
+            motion_queue.get_nowait()
+    motion_queue.put_nowait({"kind": "return_home"})
+
+
 # ---------------------------------------------------------------------------
 # Worker loop (run as asyncio task from main.py)
 # ---------------------------------------------------------------------------
@@ -359,28 +378,30 @@ async def motion_worker_loop(
             elif direction == "tilt_right":
                 current_roll_deg = _clamp(current_roll_deg - roll_step, HEAD_ROLL_MIN_DEG, HEAD_ROLL_MAX_DEG)
             elif direction == "base_left":
-                # Head leads: anticipate the turn by glancing left
-                head_lead_yaw = _clamp(current_yaw_deg + yaw_step * 0.5, HEAD_YAW_MIN_DEG, HEAD_YAW_MAX_DEG)
-                await asyncio.to_thread(
-                    mini.goto_target,
-                    head=create_head_pose(yaw=head_lead_yaw, pitch=current_pitch_deg, roll=current_roll_deg, degrees=True),
-                    body_yaw=current_body_yaw,
-                    duration=0.25,
-                )
-                await asyncio.sleep(0.18)
+                # Move head and body together — head leads cause large relative angles that hit the chassis
                 current_body_yaw = _clamp(current_body_yaw + base_step, BASE_YAW_MIN_RAD, BASE_YAW_MAX_RAD)
-                current_yaw_deg = head_lead_yaw
-            elif direction == "base_right":
-                head_lead_yaw = _clamp(current_yaw_deg - yaw_step * 0.5, HEAD_YAW_MIN_DEG, HEAD_YAW_MAX_DEG)
+                current_yaw_deg = 0.0  # head re-centers to body forward
+                dur = max(0.4, abs(base_step) * 0.8)
                 await asyncio.to_thread(
                     mini.goto_target,
-                    head=create_head_pose(yaw=head_lead_yaw, pitch=current_pitch_deg, roll=current_roll_deg, degrees=True),
+                    head=create_head_pose(yaw=math.degrees(current_body_yaw), pitch=current_pitch_deg, roll=current_roll_deg, degrees=True),
                     body_yaw=current_body_yaw,
-                    duration=0.25,
+                    duration=dur,
                 )
-                await asyncio.sleep(0.18)
+                last_head_cmd_ts = asyncio.get_running_loop().time()
+                continue
+            elif direction == "base_right":
                 current_body_yaw = _clamp(current_body_yaw - base_step, BASE_YAW_MIN_RAD, BASE_YAW_MAX_RAD)
-                current_yaw_deg = head_lead_yaw
+                current_yaw_deg = 0.0
+                dur = max(0.4, abs(base_step) * 0.8)
+                await asyncio.to_thread(
+                    mini.goto_target,
+                    head=create_head_pose(yaw=math.degrees(current_body_yaw), pitch=current_pitch_deg, roll=current_roll_deg, degrees=True),
+                    body_yaw=current_body_yaw,
+                    duration=dur,
+                )
+                last_head_cmd_ts = asyncio.get_running_loop().time()
+                continue
             elif direction == "center":
                 current_yaw_deg, current_pitch_deg, current_roll_deg = 0.0, 0.0, 0.0
 
@@ -393,7 +414,7 @@ async def motion_worker_loop(
             await asyncio.to_thread(
                 mini.goto_target,
                 head=create_head_pose(
-                    yaw=current_yaw_deg,
+                    yaw=math.degrees(current_body_yaw) + current_yaw_deg,
                     pitch=current_pitch_deg,
                     roll=current_roll_deg,
                     degrees=True,
@@ -423,13 +444,15 @@ async def motion_worker_loop(
             hold_s      = float(cmd.get("hold_s", 0.0))
             return_mode = str(cmd.get("return_mode", "auto"))
 
-            # Head leads body: move head first, then body catches up
+            # Head leads body: move head first (to final world-frame position), then body catches up.
+            # create_head_pose(yaw=X) uses WORLD frame, so target yaw = body_destination + head_relative_offset.
+            target_world_yaw = math.degrees(new_body_yaw) + current_yaw_deg
             if new_body_yaw != current_body_yaw:
                 await asyncio.to_thread(
                     mini.goto_target,
                     head=create_head_pose(
                         x=x_mm, y=y_mm, z=z_mm,
-                        roll=current_roll_deg, pitch=current_pitch_deg, yaw=current_yaw_deg,
+                        roll=current_roll_deg, pitch=current_pitch_deg, yaw=target_world_yaw,
                         degrees=True, mm=True,
                     ),
                     body_yaw=current_body_yaw,  # body stays while head moves first
@@ -441,7 +464,7 @@ async def motion_worker_loop(
                     mini.goto_target,
                     head=create_head_pose(
                         x=x_mm, y=y_mm, z=z_mm,
-                        roll=current_roll_deg, pitch=current_pitch_deg, yaw=current_yaw_deg,
+                        roll=current_roll_deg, pitch=current_pitch_deg, yaw=target_world_yaw,
                         degrees=True, mm=True,
                     ),
                     body_yaw=current_body_yaw,
@@ -452,22 +475,22 @@ async def motion_worker_loop(
                     mini.goto_target,
                     head=create_head_pose(
                         x=x_mm, y=y_mm, z=z_mm,
-                        roll=current_roll_deg, pitch=current_pitch_deg, yaw=current_yaw_deg,
+                        roll=current_roll_deg, pitch=current_pitch_deg, yaw=target_world_yaw,
                         degrees=True, mm=True,
                     ),
                     body_yaw=current_body_yaw,
                     duration=duration_s,
                 )
 
-
             if hold_s > 0:
                 await asyncio.sleep(hold_s)
 
             if return_mode == "neutral" or (return_mode == "auto" and hold_s <= 0):
                 current_yaw_deg, current_pitch_deg, current_roll_deg = 0.0, 0.0, 0.0
+                # Return head to body-forward: world yaw = body_yaw (head offset = 0)
                 await asyncio.to_thread(
                     mini.goto_target,
-                    head=create_head_pose(),
+                    head=create_head_pose(yaw=math.degrees(current_body_yaw), degrees=True),
                     body_yaw=current_body_yaw,
                     duration=0.6,
                 )
@@ -478,6 +501,18 @@ async def motion_worker_loop(
             if isinstance(name, str):
                 with suppress(Exception):
                     await mini.async_play_move(emotions.get(name), sound=False)
+
+        elif kind == "return_home":
+            current_yaw_deg = 0.0
+            current_pitch_deg = 0.0
+            current_roll_deg = 0.0
+            current_body_yaw = 0.0
+            await asyncio.to_thread(
+                mini.goto_target,
+                head=create_head_pose(),
+                body_yaw=0.0,
+                duration=0.8,
+            )
 
 
 # ---------------------------------------------------------------------------

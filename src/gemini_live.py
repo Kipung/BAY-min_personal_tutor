@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 from google import genai
 from google.genai import errors as genai_errors
@@ -6,11 +7,66 @@ from google.genai import errors as genai_errors
 from tools import Tools
 from audio_adapters import clear_queue, drop_oldest_put_nowait
 from firebase_helper import FirebaseHelper
-from motion import MOVE_HEAD_TOOL_DECLARATION, SET_POSE_TOOL_DECLARATION, PLAY_EMOTION_TOOL_DECLARATION
+from motion import (
+    MOVE_HEAD_TOOL_DECLARATION, SET_POSE_TOOL_DECLARATION,
+    PLAY_EMOTION_TOOL_DECLARATION, RETURN_HOME_TOOL_DECLARATION,
+)
 from vision import ReachyVision
 
 MIC_PREROLL_FRAMES = 10  # number of initial mic frames to skip to avoid stale audio
 MODEL = "gemini-live-2.5-flash-native-audio"
+
+DEMO_MODE_ADDENDUM = (
+    "\n\n## Demo Mode — Strict Conversational Rules\n"
+    "You are being recorded for a live demo. Follow these rules exactly and let them "
+    "override any earlier guidance where they conflict.\n\n"
+
+    "Brevity:\n"
+    "- Every spoken response is at most 2 sentences. No exceptions.\n"
+    "- Never recap what the student just said. Never ask follow-up questions.\n"
+    "- Give ONE response per turn, then stop and wait.\n\n"
+
+    "Triggers → Tool calls:\n"
+    "- Student says 'example question', 'let's try one', 'next one', 'skip this', "
+    "'another one' → call next_example_question, then read the question aloud in one sentence.\n"
+    "- Student says 'start the quiz', 'begin quiz', 'quiz time', 'ready for the quiz' → "
+    "call play_emotion(category='encourage'), then call start_quiz, then say 'Good luck!' "
+    "— nothing more.\n\n"
+
+    "Looking at the iPad (work-check):\n"
+    "The student's work is on an iPad held directly in front of you, slightly below "
+    "eye level. DO NOT call get_face_position. Use this exact sequence:\n"
+    "- Student says 'check my work', 'is this right', 'am I correct', 'look at this', "
+    "'did I do it right' →\n"
+    "  1. call play_emotion(category='thinking')\n"
+    "  2. call set_pose(pitch_deg=15, yaw_deg=0, return_mode='keep', duration_s=1.0)\n"
+    "  3. call capture_image\n"
+    "  4. In ONE sentence, say whether the work is correct. If wrong, in ONE more "
+    "sentence name the specific step that is wrong. (Total: 2 sentences max.)\n"
+    "  5. call return_home\n\n"
+
+    "Session opening:\n"
+    "- First turn only: call play_emotion(category='greeting') before speaking.\n\n"
+
+    "Quiz behavior:\n"
+    "- Stay completely silent during the quiz unless directly addressed.\n"
+    "- Do not narrate clicks, answers, or progress.\n\n"
+
+    "Emotion discipline:\n"
+    "- Keep using the natural emotion behavior described earlier (greeting, praise, "
+    "encourage, thinking, surprised, agreement) — those are good. The rules below only "
+    "PIN specific cues for demo moments; they do not replace the base palette.\n"
+    "- Pinned cues: greeting at session open, thinking before capture_image (iPad flow), "
+    "encourage right before start_quiz.\n"
+    "- Still use emotions sparingly — roughly one every 3–4 exchanges, as before.\n"
+    "- Do NOT make extra set_pose or move_head calls outside the iPad look-down flow "
+    "during the demo (emotion animations are fine).\n\n"
+
+    "Never:\n"
+    "- Never ask 'would you like me to...' — just do it.\n"
+    "- Never call capture_image unless the student explicitly asks you to look.\n"
+    "- Never speak between tool calls in the iPad sequence."
+)
 
 
 def build_live_config(lesson_context: str = "") -> dict:
@@ -40,34 +96,59 @@ def build_live_config(lesson_context: str = "") -> dict:
         "Play them in pauses between your speech, or before you start talking.\n\n"
 
         "## Head & Body Positioning\n"
-        "Use set_pose to point your head where you need to look. Your ranges are:\n"
-        "- pitch_deg: -25 (all the way up) to 25 (all the way down)\n"
-        "- yaw_deg: -35 (full right) to 35 (full left)\n"
-        "- roll_deg: -20 (tilt right) to 20 (tilt left)\n"
-        "- body_yaw_deg: -60 to 60 for larger turns\n"
-        "Use return_mode=keep to hold a position, or omit it to return to neutral after.\n\n"
+        "Use set_pose for precise positioning. Ranges:\n"
+        "- yaw_deg: -25 (full right) to 25 (full left), RELATIVE to body forward\n"
+        "- pitch_deg: -20 (all the way up) to 20 (all the way down)\n"
+        "- roll_deg: -15 (tilt right) to 15 (tilt left)\n"
+        "- body_yaw_deg: -160 (turn body right) to 160 (turn body left) in world frame\n"
+        "Use return_mode='keep' to hold a position. "
+        "Call return_home() to smoothly reset everything to neutral — do this after visual tasks "
+        "or when the student says 'look forward' / 'go back to normal'.\n\n"
 
-        "## Environment Awareness\n"
+        "Movement naturalness rules:\n"
+        "- When a student says 'turn right'/'look left' with no qualifier → use medium intensity. "
+        "Small is for 'slightly'/'a bit', large is for 'way over'/'all the way'.\n"
+        "- After a base turn, your head automatically re-centers on the new body direction. "
+        "Subsequent 'look left/right' commands move relative to that new body forward — this is correct.\n"
+        "- 'Turn around': use set_pose(body_yaw_deg=155, return_mode='keep') to turn almost "
+        "fully backwards in one command (or -155 to turn the other way). "
+        "Do NOT use base_left/base_right for full turn-arounds — they are for partial turns only.\n"
+        "- In set_pose, yaw_deg is ALWAYS relative to body forward. If also setting body_yaw_deg, "
+        "leave yaw_deg=0 unless you intentionally want the head offset from the body direction.\n\n"
+
+        "## Seeing the Student\n"
+        "Call get_face_position() to find out where the student is in your camera view. "
+        "It returns where their face is and the yaw/pitch adjustment to center on them. "
+        "Use this:\n"
+        "- At the start of a session to orient toward the student\n"
+        "- After a large base rotation to verify the student is still in view\n"
+        "- Before capturing work images to make sure you're aimed correctly\n\n"
+
+        "## Looking at Student Work\n"
         "When the student asks you to look at their work:\n"
-        "1. First position your head to get a FULL view of their work — use set_pose to aim your camera "
-        "directly at the center of what they want you to see.\n"
+        "1. Call get_face_position() to know where they are, then set_pose to roughly aim at their work "
+        "(typically pitched slightly down toward a desk).\n"
         "2. Call capture_image to see through your camera.\n"
-        "3. CHECK the image: can you see the ENTIRE page/screen/notebook? If part of it is cut off "
-        "(e.g. you can only see the top half, or the left side is missing), adjust your pose "
-        "(move yaw_deg left/right, pitch_deg up/down) to center it better, then capture_image again.\n"
-        "4. Only respond once you are confident you can see the full work.\n\n"
-        "NEVER guess or make up content you cannot clearly see in the captured image. "
-        "If the image is blurry or you cannot read the text, ask the student to hold it closer or "
-        "point to the specific part they need help with.\n\n"
+        "3. CHECK the image: can you see the ENTIRE page? If part is cut off, adjust pose "
+        "(yaw_deg left/right, pitch_deg up/down) and capture_image again.\n"
+        "4. Only respond once you are confident you can see the full work.\n"
+        "5. When done, call return_home() to return to a natural position.\n\n"
+        "NEVER guess content you cannot clearly see. "
+        "If the image is blurry or you cannot read text, ask the student to hold it closer.\n\n"
 
-        "For explicit movement requests, map wording cues to motion size: words like 'slightly'/'a bit' → "
-        "small move, 'more'/'further' → medium move, and 'way more'/'a lot'/'all the way' → large move."
+        "For explicit movement requests, map wording to intensity: 'slightly'/'a bit' → small, "
+        "'more'/'further' → medium (default for unqualified requests), "
+        "'way more'/'a lot'/'all the way' → large."
     )
 
     if lesson_context:
         system_instruction = base_instruction + "\n\n" + lesson_context
     else:
         system_instruction = base_instruction
+
+    if os.getenv("DEMO_MODE", "false").lower() == "true":
+        system_instruction += DEMO_MODE_ADDENDUM
+        print("[live] DEMO_MODE enabled — strict demo prompt appended.")
 
     return {
         "response_modalities": ["AUDIO"],
@@ -87,6 +168,16 @@ def build_live_config(lesson_context: str = "") -> dict:
                 MOVE_HEAD_TOOL_DECLARATION,
                 SET_POSE_TOOL_DECLARATION,
                 PLAY_EMOTION_TOOL_DECLARATION,
+                RETURN_HOME_TOOL_DECLARATION,
+                {
+                    "name": "get_face_position",
+                    "description": (
+                        "Detect where the student's face is in your camera view. "
+                        "Returns a description of their position (left/right/above/below center) "
+                        "and suggested yaw_deg/pitch_deg adjustments to center on them. "
+                        "Use this at the start of a session, after large turns, or before capturing work."
+                    ),
+                },
                 {
                     "name": "next_example_question",
                     "description": "move on to the next example question in the current module. No arguments. Returns the question, answer, and steps to walk through to get to the answer."
@@ -143,11 +234,11 @@ async def receive_loop(
     vision: ReachyVision | None = None,
 ) -> str:
     """Returns 'disconnected', 'module_exited', or 'ended'."""
-    tool_handler = Tools(firebase, motion_queue)
+    tool_handler = Tools(firebase, motion_queue, vision=vision)
     file = open("gemini_live_responses.txt", "w", encoding="utf-8")
     ended = False
 
-    MOTION_TOOLS = {"move_head", "set_pose", "play_emotion"}
+    MOTION_TOOLS = {"move_head", "set_pose", "play_emotion", "return_home"}
 
     while not ended:
         if disconnected_event.is_set():
@@ -184,7 +275,10 @@ async def receive_loop(
                     fn = getattr(tool_handler, call.name, None)
                     if fn:
                         kwargs = dict(call.args) if call.args else {}
-                        result = fn(**kwargs)
+                        if asyncio.iscoroutinefunction(fn):
+                            result = await fn(**kwargs)
+                        else:
+                            result = fn(**kwargs)
                         print(f"TOOL RESULT: {result}")
                         if call.name not in MOTION_TOOLS:
                             tool_responses.append({

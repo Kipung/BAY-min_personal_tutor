@@ -25,7 +25,7 @@ MIC_QUEUE_MAX = 8
 async def run() -> None:
     firebase = FirebaseHelper()
     firebase.set_loop(asyncio.get_running_loop())
-
+    
     creds = service_account.Credentials.from_service_account_file(
         "credentials.json",
         scopes=["https://www.googleapis.com/auth/cloud-platform"],
