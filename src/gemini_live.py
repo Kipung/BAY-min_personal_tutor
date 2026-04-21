@@ -348,12 +348,11 @@ async def receive_loop(
                         else:
                             result = fn(**kwargs)
                         print(f"TOOL RESULT: {result}")
-                        if call.name not in MOTION_TOOLS:
-                            tool_responses.append({
-                                "id": call.id,
-                                "name": call.name,
-                                "response": {"result": result},
-                            })
+                        tool_responses.append({
+                            "id": call.id,
+                            "name": call.name,
+                            "response": {"result": result},
+                        })
                     if call.name == "end_conversation":
                         ended = True
                 if tool_responses:
