@@ -227,15 +227,15 @@ def build_live_config(lesson_context: str = "") -> dict:
                 SET_POSE_TOOL_DECLARATION,
                 PLAY_EMOTION_TOOL_DECLARATION,
                 RETURN_HOME_TOOL_DECLARATION,
-                {
-                    "name": "get_face_position",
-                    "description": (
-                        "Detect where the student's face is in your camera view. "
-                        "Returns a description of their position (left/right/above/below center) "
-                        "and suggested yaw_deg/pitch_deg adjustments to center on them. "
-                        "Use this at the start of a session, after large turns, or before capturing work."
-                    ),
-                },
+                # {
+                #     "name": "get_face_position",
+                #     "description": (
+                #         "Detect where the student's face is in your camera view. "
+                #         "Returns a description of their position (left/right/above/below center) "
+                #         "and suggested yaw_deg/pitch_deg adjustments to center on them. "
+                #         "Use this at the start of a session, after large turns, or before capturing work."
+                #     ),
+                # },
                 {
                     "name": "next_example_question",
                     "description": "move on to the next example question in the current module. No arguments. Returns the question, answer, and steps to walk through to get to the answer."
