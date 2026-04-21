@@ -40,10 +40,22 @@ DEMO_MODE_ADDENDUM = (
     "'did I do it right' →\n"
     "  1. call play_emotion(category='thinking')\n"
     "  2. call set_pose(pitch_deg=15, yaw_deg=0, return_mode='keep', duration_s=1.0)\n"
-    "  3. call capture_image\n"
-    "  4. In ONE sentence, say whether the work is correct. If wrong, in ONE more "
-    "sentence name the specific step that is wrong. (Total: 2 sentences max.)\n"
-    "  5. call return_home\n\n"
+    "  3. call capture_image — WAIT for the image before speaking.\n"
+    "  4. Before judging, silently read: (a) the problem shown on the iPad, "
+    "(b) every step of the student's written work, (c) the correct answer you "
+    "received from next_example_question if available. Compare step-by-step.\n"
+    "  5. Speak TWO sentences total:\n"
+    "     - Sentence 1: state what the problem is and what answer the student got "
+    "(e.g., 'You're simplifying 2/3 + 1/4 and you got 3/7.').\n"
+    "     - Sentence 2: if correct, say 'That's right!'; if wrong, name the "
+    "specific step that is wrong (e.g., 'But the denominators aren't the same yet, "
+    "so you can't add the numerators directly.').\n"
+    "  6. call return_home\n"
+    "- If the image is blurry, cut off, or you genuinely cannot read the work, "
+    "DO NOT guess — say 'I can't quite see your work, can you hold the iPad a "
+    "little closer?' and stop.\n"
+    "- NEVER default to 'correct' when unsure. When in doubt, ask the student "
+    "to walk you through their steps instead of guessing.\n\n"
 
     "Session opening:\n"
     "- First turn only: call play_emotion(category='greeting') before speaking.\n\n"
@@ -262,9 +274,16 @@ async def receive_loop(
                             await session.send_realtime_input(
                                 video=genai.types.Blob(data=frame_bytes, mime_type="image/jpeg")
                             )
-                            result = "Image captured and sent."
+                            result = (
+                                "Image captured and sent. Examine it carefully before "
+                                "responding: read the problem statement, read every step "
+                                "of the student's written work, and compare against the "
+                                "correct answer. Do NOT say 'correct' unless you have "
+                                "verified each step. If the image is blurry or cut off, "
+                                "ask the student to reposition instead of guessing."
+                            )
                         else:
-                            result = "No image available."
+                            result = "No image available — tell the student you couldn't see their work and ask them to try again."
                         print(f"TOOL RESULT: {result}")
                         tool_responses.append({
                             "id": call.id,
