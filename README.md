@@ -1,4 +1,4 @@
-<picture><source media="(max-width: 640px)" srcset=".github/banner-m-light.svg"><source media="(prefers-color-scheme: dark)" srcset=".github/banner-dark.svg"><img src=".github/banner-light.svg" width="100%" alt="BAY-min: a robot math tutor built on Reachy Mini and Gemini Live."></picture>
+<picture><source media="(max-width: 640px)" srcset=".github/banner-m.svg"><img src=".github/banner.svg" width="100%" alt="BAY-min: a robot math tutor built on Reachy Mini and Gemini Live."></picture>
 
 **BAY-min** is a friendly robot math tutor for elementary students, built on the [Reachy Mini](https://github.com/pollen-robotics/reachy_mini) robot. It holds a spoken conversation through Gemini Live, looks down at the student's work through its camera when it needs to check an answer, keeps its head turned toward the student, and reacts with expressions from Reachy's emotion library.
 
